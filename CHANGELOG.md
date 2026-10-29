@@ -4,6 +4,34 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.60
+
+### `@yanlinglabs/winter-provider-catalog`: 101 new models (1303 → 1404), Kimi and MiniMax request fixes
+
+Additive: no model key is removed or renamed, and the family slots are unchanged.
+
+- **Headline models.**
+  - **GPT-6.1 Terra:** `openai/gpt-6.1-terra`, `codex-oauth/gpt-6.1-terra` and `openrouter/openai/gpt-6.1-terra`.
+  - **Kimi K3.1 Pro and Highspeed:**
+    - `kimi-k3.1-pro(-highspeed)` on `moonshot`, `moonshot-anthropic`, `moonshot-cn` and `moonshot-cn-anthropic`.
+    - `k3.1-pro(-highspeed)` on the four `kimi-coding*` providers.
+    - `openrouter/moonshotai/kimi-k3.1-pro`.
+  - **MiniMax M3.1 Flash:** `MiniMax-M3.1-Flash` on all eight MiniMax providers, plus `openrouter/minimax/minimax-m3.1-flash`.
+  - **Gemini 4 Argon:** `gemini-4-argon` on `google`, `google-openai`, `vertex` and OpenRouter.
+- **Other direct-provider models.**
+  - Qwen 3.8 2.4T, Qwen 3.7 Flash and Qwen 3.8 Flash on `alibaba`, `alibaba-cn` and `qwen-cloud`.
+  - Mercury 3 and Mercury 2.5 on `inception`.
+  - Ling 3.1 Flash, Ling 3.0 Flash and Ling 3.0 Flash VL on `ant-ling`.
+  - Nemotron 3.5 Super VL on `nvidia`.
+- **OpenRouter models.** 59 current OpenRouter models were missing from the catalog. Where the maker has its own provider in the catalog, each row's note compares the figures with the maker's page.
+- **Prices.**
+  - `openrouter/openai/gpt-5.6-sol` re-priced to $4/$20, plus the >272K tier.
+  - `openrouter/x-ai/grok-4.7` re-priced to $2/$6, plus the ≥200K tier.
+  - Gemini 4 Argon's $2/$10 runs through 2026-11-30.
+- **Retirement notes.** Kimi K2 rows, Ling 2.6 rows and Claude Sonnet 4.5 have dated notes. Their status stays `candidate` until those dates pass.
+- **Kimi effort on the Anthropic format.** Kimi K3 and K3.1 rows now send effort as `output_config.effort`, Kimi's documented field; before, they sent a thinking budget Kimi's schema doesn't have. This covers `moonshot-anthropic`, `moonshot-cn-anthropic` and the `kimi-coding*` Anthropic rows. The adapter still adds `thinking: {type: "adaptive"}`, which isn't in Kimi's schema; this hasn't been probed live.
+- **Models that always think.** MiniMax M3.1 Flash and Kimi Code K3.1 Pro on the Anthropic format list `thinking.type.disabled` as unsupported, so a thinking-off request leaves the field out instead of returning a 400.
+
 ## 0.0.59
 
 ### `@yanlinglabs/winter-web`: date filters, a page's title and links, binary bytes
