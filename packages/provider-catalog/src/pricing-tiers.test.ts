@@ -80,11 +80,10 @@ describe("0.0.56 rows", () => {
     expect(row("openrouter/openai/gpt-6.1-sol").pricing!.value.longContextTiers![0]!.minPromptTokens).toBe(272000);
   });
 
-  test("W7: the OpenRouter reasoning routes replay reasoning_details (opaque state, own-route domain); Muse Spark stays 'none'", () => {
-    for (const key of ["openrouter/anthropic/claude-haiku-5.5", "openrouter/anthropic/claude-sonnet-5.5", "openrouter/deepseek/deepseek-v4.1-flash", "openrouter/openai/gpt-6-luna", "openrouter/openai/gpt-6.1-sol"]) {
+  test("W7: the OpenRouter reasoning routes replay reasoning_details (opaque state, own-route domain), Muse Spark included since the 2026-10-29 audit", () => {
+    for (const key of ["openrouter/anthropic/claude-haiku-5.5", "openrouter/anthropic/claude-sonnet-5.5", "openrouter/deepseek/deepseek-v4.1-flash", "openrouter/openai/gpt-6-luna", "openrouter/openai/gpt-6.1-sol", "openrouter/meta/muse-spark-1.3-contributor"]) {
       expect([key, row(key).reasoning!.continuation, row(key).reasoning!.continuationDomain!.value]).toEqual([key, "opaque-provider-state", [key]]);
     }
-    expect(row("openrouter/meta/muse-spark-1.3-contributor").reasoning!.continuation).toBe("none");
   });
 
   test("W1: every openrouter/anthropic/* row declares promptCaching", () => {

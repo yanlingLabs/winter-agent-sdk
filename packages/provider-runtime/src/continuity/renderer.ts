@@ -279,7 +279,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
         // replays its own thinking to the model that produced it, natively, and never quotes a
         // model's reasoning back to it; so does this. What rides back is only what the adapter chose
         // to capture for its own model -- Responses keeps only reasoning items carrying
-        // `encrypted_content`, the chat adapter keeps `reasoning_content` only for a `full-exposed` row
+        // `encrypted_content`, the chat adapter keeps `reasoning_content` only for a `full-exposed` `plaintext` row
         // (no shipped row is both full-exposed and domain-less, so no chat row gains a replay here) --
         // and in-dialect blocks ride with the signature the endpoint sent (`""` when it sent none),
         // exactly as claude sends them back to the same endpoint.

@@ -4,6 +4,44 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.62
+
+### Reasoning continuation, audited per provider against the vendors' own docs
+
+`@yanlinglabs/winter-provider-catalog` and `@yanlinglabs/winter-provider-runtime`. 306 rows changed their reasoning fields, 191 of them their continuation value. Every changed row cites the vendor page with a `sourceRef` and an `observedAt` of 2026-10-29. No row's continuation was changed on a guess: where no page covers a host or model, the row is `none`, and the case is on the live-call list in the PR.
+
+- **Chat Completions `plaintext` now means replayed.**
+  - **The bug:** the adapter captured and replayed `reasoning_content` only for `readableState: full-exposed` rows. So Kimi/Moonshot, MiniMax, MiMo, Z.ai/Zhipu, Mistral, Qwen and other rows labelled `plaintext` kept nothing.
+  - **The fix:** where the vendor documents passing reasoning back, the row is now `plaintext` with `full-exposed` and is replayed (with `replayScope`, and `toolLoopRequirement: hard-error` where the vendor documents a 400).
+  - **Rows moved to `none`:** where the vendor's docs don't cover passing reasoning back on that host or model. That covers:
+    - xai-oauth (Chat Completions has no field for the ciphertext);
+    - the Qwen Coding Plan and Token Plan;
+    - Qwen 3.5, qwen3-coder and open-weight Qwen on Alibaba;
+    - Z.ai GLM-4.5 (`thinking` is GLM-4.6+);
+    - NVIDIA Nemotron;
+    - the Tencent token-plan and TokenHub rows no page covers.
+  - **Invariant:** a test pins it: a chat row is `plaintext` exactly when it is `full-exposed`.
+- **`opaque-provider-state` where the adapter already replays it.**
+  - OpenAI gpt-5…5.5, o3 and o3-mini on Responses: encrypted reasoning, already requested with `store: false`.
+  - Vertex Gemini: thought signatures.
+  - The Anthropic-format Kimi, MiniMax M3/M3.1, MiMo, Meta and DeepSeek hosts: thinking blocks.
+  - OpenRouter's four Meta Muse rows. OpenRouter documents the `meta-responses-v1` format for the Meta-served pair; the two open-weight rows carry the generic `reasoning_details` evidence.
+- **Adapter changes, Chat Completions.** Each is gated on the provider and the row's continuation:
+  - **Gemini on `google-openai`:** each tool call's `extra_content` thought signature is captured per call id and replayed on that call.
+  - **Mistral and Codestral:** ThinkChunks are replayed at the head of the assistant `content`.
+  - **Cerebras:** reasoning is replayed as `reasoning`.
+  - **Alibaba, Alibaba CN and Qwen Cloud:** `preserve_thinking: true` is sent, for the documented models only.
+  - **List-shaped `content`:** now parsed on every surface. Before, a Mistral answer lost its leading text.
+  - **OpenRouter:** `reasoning_details` blocks are keyed by index and type.
+- **Fix for 0.0.61's Gemini-through-OpenRouter tool loops.** Every second request was refused.
+  - **Encrypted blobs stay whole:** each `reasoning.encrypted` entry is now captured as its own blob. Before, entries sharing an index had their `data` concatenated, and Gemini sends one blob per signed step at index 0.
+  - **Unsigned thought text stays home:** a `reasoning.text` entry in format `anthropic-claude-v1` or `google-gemini-v1` without a `signature` is no longer replayed. Google signs Gemini's thought text internally and rejects it on replay; Anthropic rejects unsigned thinking.
+  - **Source:** both rules are what OpenRouter's own AI SDK provider does. The fix is tested on a doc-shaped fixture and not yet live-verified.
+- **Mistral Medium 3.5 on OpenRouter:** the row notes that OpenRouter lists no cache-read price, so cached prompt tokens bill at the full input rate.
+- **Unchanged.**
+  - Azure's continuation depends on the connection's `apiVersion`.
+  - The Anthropic-format adapter still replays a model's own thinking blocks whatever its row says.
+
 ## 0.0.61
 
 ### `@yanlinglabs/winter-provider-catalog`: OpenRouter reasoning rows keep their reasoning state

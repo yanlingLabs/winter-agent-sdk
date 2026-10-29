@@ -69,10 +69,27 @@ async function startDeepseekAnthropicFake(): Promise<{ url: string; bodies: stri
   return { url: `http://127.0.0.1:${server.port}`, bodies, close: async () => void (await server.stop(true)) };
 }
 
-/** The REAL catalog with ONE change: the provider's reviewed endpoint points at the loopback. The model row is untouched. */
+/**
+ * The REAL catalog with TWO changes: the provider's reviewed endpoint points at the loopback, and the
+ * model row is held at the shape the bug needed -- `continuation: "none"`, no continuation domain.
+ *
+ * The 2026-10-29 continuation audit moved the shipped row to `opaque-provider-state` with its own domain
+ * (DeepSeek's Anthropic API documents `thinking` blocks as accepted input), which replays through
+ * `sameDomain` and would turn this into a test of something else. The SELF path it pins (`sameModel`, for
+ * a domain-less row) is still live for every Anthropic-dialect row left at `none`, so the row is pinned
+ * here rather than the test dropped.
+ */
 function catalogAt(url: string): WinterCatalog {
   const catalog = loadCatalog();
-  return { ...catalog, providers: catalog.providers.map((p) => (p.id === PROVIDER ? { ...p, defaultEndpoints: { ...p.defaultEndpoints, api: url } } : p)) };
+  return {
+    ...catalog,
+    providers: catalog.providers.map((p) => (p.id === PROVIDER ? { ...p, defaultEndpoints: { ...p.defaultEndpoints, api: url } } : p)),
+    models: catalog.models.map((m) => {
+      if (m.key !== MODEL || m.reasoning === undefined) return m;
+      const { continuationDomain: _domain, ...reasoning } = m.reasoning;
+      return { ...m, reasoning: { ...reasoning, continuation: "none" as const } };
+    }),
+  };
 }
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {

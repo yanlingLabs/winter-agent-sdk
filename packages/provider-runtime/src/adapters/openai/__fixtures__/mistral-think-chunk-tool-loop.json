@@ -1,0 +1,17 @@
+{
+  "$comment": "2026-10-29: a Mistral tool loop at `reasoning_effort: \"high\"`, as SSE `data:` payloads. SHAPED FROM Mistral's documented wire (https://docs.mistral.ai/studio/conversations/reasoning, \"Streaming\": `delta.content` is first a list containing a `ThinkChunk` (`{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":...}]}`), then \"a single list containing both a closing ThinkChunk and the first TextChunk\", then plain strings; the non-streamed `message.content` is `[ThinkChunk, TextChunk]`; https://docs.mistral.ai/openapi.yaml for `ThinkChunk` and `AssistantMessage.content`), not captured from a live call: every id is synthetic.",
+  "turn1": [
+    { "id": "cmpl-synthetic-1", "model": "mistral-medium-3-5", "choices": [{ "index": 0, "delta": { "role": "assistant", "content": [{ "type": "thinking", "thinking": [{ "type": "text", "text": "The user wants the weather, " }] }] }, "finish_reason": null }] },
+    { "id": "cmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "content": [{ "type": "thinking", "thinking": [{ "type": "text", "text": "so I should call the tool " }] }] }, "finish_reason": null }] },
+    { "id": "cmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "content": [{ "type": "thinking", "thinking": [{ "type": "text", "text": "for Paris." }] }, { "type": "text", "text": "Let me" }] }, "finish_reason": null }] },
+    { "id": "cmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "content": " check." }, "finish_reason": null }] },
+    { "id": "cmpl-synthetic-1", "choices": [{ "index": 0, "delta": { "tool_calls": [{ "index": 0, "id": "Ab1Cd2Ef3", "type": "function", "function": { "name": "get_current_temperature", "arguments": "{\"location\":\"Paris\"}" } }] }, "finish_reason": "tool_calls" }], "usage": { "prompt_tokens": 90, "completion_tokens": 40, "total_tokens": 130 } }
+  ],
+  "turn2": [
+    { "id": "cmpl-synthetic-2", "model": "mistral-medium-3-5", "choices": [{ "index": 0, "delta": { "role": "assistant", "content": "It is 15C in Paris." }, "finish_reason": "stop" }], "usage": { "prompt_tokens": 160, "completion_tokens": 8, "total_tokens": 168 } }
+  ],
+  "expectedContent": [
+    { "type": "thinking", "thinking": [{ "type": "text", "text": "The user wants the weather, so I should call the tool for Paris." }] },
+    { "type": "text", "text": "Let me check." }
+  ]
+}

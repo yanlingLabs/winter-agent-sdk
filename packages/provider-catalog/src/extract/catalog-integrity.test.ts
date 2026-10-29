@@ -1356,7 +1356,9 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
     for (const model of catalog.models) {
       const domain = model.reasoning?.continuationDomain;
       if (domain === undefined) continue;
-      expect([model.key, domain.confidence]).toEqual([model.key, "declared"]);
+      // `inferred` (2026-10-29 audit): the domain is still the row's own key; the acceptance behind it is
+      // read from two documents together or from the vendor's own tooling, not stated for this endpoint.
+      expect([model.key, ["declared", "inferred"].includes(domain.confidence)]).toEqual([model.key, true]);
       expect([model.key, domain.source]).toEqual([model.key, "official-doc"]);
       expect(domain.sourceRef).toMatch(/own-state acceptance|BOTH halves/);
       expect(domain.value).toEqual([model.key]);
@@ -2228,28 +2230,183 @@ describe("WS-27: OpenCode Zen rows on the coding-agent-gateway ruling", () => {
   }
 });
 
-describe("0.0.61: every OpenRouter reasoning row replays its own reasoning_details", () => {
+describe("0.0.61 + the 2026-10-29 audit: every OpenRouter reasoning row replays its own reasoning_details", () => {
   // The adapter captures and replays `reasoning_details` on the OpenRouter connection for any row whose
   // continuation is `opaque-provider-state`, whatever the upstream, so a reasoning row left at `none`
   // only threw that state away -- and made a host hide the route beside a vendor twin that keeps state.
-  // Meta's Muse rows are the documented exception: Meta says Chat Completions cannot replay external reasoning.
+  // 0.0.61 left Meta's Muse rows at `none` on Meta's Chat Completions limit; the 2026-10-29 audit moved
+  // them too: OpenRouter documents a Meta Responses format (`meta-responses-v1`) for `reasoning_details`,
+  // and Meta's Responses API replays its encrypted reasoning -- the Chat Completions limit is Meta's own
+  // endpoint, not this route. No OpenRouter page names an upstream that ignores the passed-back details.
   const openrouter = catalog.models.filter((m) => m.providerId === "openrouter");
-  const isMeta = (m: WinterModelDescriptor) => m.key.startsWith("openrouter/meta/");
 
   test("a reasoning row is opaque-provider-state, scoped to its own route", () => {
-    const reasoning = openrouter.filter((m) => m.reasoning?.supported.value === true && !isMeta(m));
-    expect(reasoning.length).toBeGreaterThanOrEqual(87);
+    const reasoning = openrouter.filter((m) => m.reasoning?.supported.value === true);
+    expect(reasoning.length).toBeGreaterThanOrEqual(91);
+    expect(reasoning.filter((m) => m.key.startsWith("openrouter/meta/")).length).toBeGreaterThanOrEqual(4);
     for (const m of reasoning) {
       expect([m.key, m.reasoning!.continuation]).toEqual([m.key, "opaque-provider-state"]);
       expect([m.key, m.reasoning!.continuationDomain?.value]).toEqual([m.key, [m.key]]);
     }
+    // Meta-served Muse rows rest on OpenRouter's and Meta's docs read together (inferred); the open-weight
+    // Muse rows are served by third-party hosts and carry OpenRouter's generic evidence (declared).
+    for (const key of ["openrouter/meta/muse-spark-1.3", "openrouter/meta/muse-spark-1.3-contributor"]) expect([key, catalog.models.find((m) => m.key === key)!.reasoning!.continuationDomain!.confidence]).toEqual([key, "inferred"]);
+    for (const key of ["openrouter/meta/muse-spark-open", "openrouter/meta/muse-glimmer-30b"]) {
+      const domain = catalog.models.find((m) => m.key === key)!.reasoning!.continuationDomain!;
+      expect([key, domain.confidence, domain.sourceRef!.includes("meta-responses-v1")]).toEqual([key, "declared", false]);
+    }
   });
 
-  test("Meta's Muse rows, and rows without reasoning, keep none", () => {
-    const meta = openrouter.filter(isMeta);
-    expect(meta.length).toBeGreaterThanOrEqual(4);
-    for (const m of [...meta, ...openrouter.filter((r) => r.reasoning !== undefined && r.reasoning.supported.value !== true)]) {
+  test("rows without reasoning keep none", () => {
+    for (const m of openrouter.filter((r) => r.reasoning !== undefined && r.reasoning.supported.value !== true)) {
       expect([m.key, m.reasoning!.continuation]).toEqual([m.key, "none"]);
     }
+  });
+});
+
+describe("2026-10-29 continuation audit: each provider family's documented replay contract", () => {
+  // `continuation` says whether a row's reasoning from an earlier assistant turn is sent back on later
+  // requests, in what form. These pin the per-family rules the audit settled from each vendor's own docs
+  // (each row's evidence carries the URL); the adapter half is proven on the wire in provider-runtime's
+  // `chat-completions-continuation.test.ts`.
+  const adapterOf = new Map(catalog.providers.map((p) => [p.id, p.adapterId]));
+  const row = (key: string) => catalog.models.find((m) => m.key === key)!;
+  const reasoning = (provider: string, pred: (m: WinterModelDescriptor) => boolean = () => true) =>
+    catalog.models.filter((m) => m.providerId === provider && m.reasoning?.supported.value === true && pred(m));
+  const expectAll = (rows: WinterModelDescriptor[], continuation: string, min = 1) => {
+    expect(rows.length).toBeGreaterThanOrEqual(min);
+    for (const m of rows) {
+      expect([m.key, m.reasoning!.continuation]).toEqual([m.key, continuation]);
+      // The domain is the row's own route: stated as `[key]`, or absent (the registry then derives the key).
+      if (continuation !== "none") expect([m.key, m.reasoning!.continuationDomain?.value ?? [m.key]]).toEqual([m.key, [m.key]]);
+    }
+  };
+
+  test("a Chat Completions row is `plaintext` exactly when it is `full-exposed` -- the adapter replays `reasoning_content` only for such a row, so `plaintext` without it claimed state nothing kept", () => {
+    for (const m of catalog.models) {
+      if (adapterOf.get(m.providerId) !== "winter.openai-chat-completions" || m.reasoning === undefined) continue;
+      const exposed = m.reasoning.readableState?.value === "full-exposed";
+      expect([m.key, m.reasoning.continuation === "plaintext"]).toEqual([m.key, exposed]);
+    }
+  });
+
+  test("Chat Completions rows hold opaque state only where the adapter captures it: OpenRouter's reasoning_details and Gemini's extra_content", () => {
+    const opaque = new Set(catalog.models.filter((m) => adapterOf.get(m.providerId) === "winter.openai-chat-completions" && m.reasoning?.continuation === "opaque-provider-state").map((m) => m.providerId));
+    expect([...opaque].sort()).toEqual(["google-openai", "openrouter"]);
+  });
+
+  test("Kimi: reasoning_content on the Open Platform and Kimi Code chat; signed thinking blocks on both Messages endpoints", () => {
+    for (const p of ["moonshot", "moonshot-cn", "kimi-coding-openai", "kimi-coding-intl-openai"]) expectAll(reasoning(p), "plaintext", 6);
+    for (const p of ["moonshot-anthropic", "moonshot-cn-anthropic", "kimi-coding", "kimi-coding-intl"]) expectAll(reasoning(p), "opaque-provider-state", 3);
+    // Kimi Code's own API docs say nothing about thinking blocks: its acceptance is inferred.
+    for (const p of ["kimi-coding", "kimi-coding-intl"]) for (const m of reasoning(p)) expect([m.key, m.reasoning!.continuationDomain?.confidence]).toEqual([m.key, "inferred"]);
+    for (const p of ["kimi-coding-openai", "kimi-coding-intl-openai"]) for (const m of reasoning(p)) expect([m.key, m.reasoning!.toolLoopRequirement?.value]).toEqual([m.key, "hard-error"]);
+    expect(row("moonshot/kimi-k2.6").reasoning!.replayScope?.value).toBe("current-tool-loop");
+    expect(row("moonshot/kimi-k3.1-pro").reasoning!.replayScope?.value).toBe("all-turns");
+  });
+
+  test("MiniMax: reasoning_content on Chat Completions; thinking blocks on the Messages API for M3 and M3.1 Flash only", () => {
+    for (const p of ["minimax", "minimax-cn", "minimax-token-plan", "minimax-cn-token-plan"]) expectAll(reasoning(p), "plaintext", 4);
+    for (const p of ["minimax-anthropic", "minimax-cn-anthropic", "minimax-token-plan-anthropic", "minimax-cn-token-plan-anthropic"]) {
+      expectAll(reasoning(p, (m) => /^MiniMax-M3/.test(m.upstreamId)), "opaque-provider-state", 2);
+      expectAll(reasoning(p, (m) => /^MiniMax-M2/.test(m.upstreamId)), "none", 2);
+    }
+  });
+
+  test("Xiaomi MiMo: reasoning_content on every Chat host (400 without it on v2.6), thinking blocks on every Messages host", () => {
+    for (const p of ["xiaomi", "xiaomi-token-plan", "xiaomi-token-plan-cn", "xiaomi-token-plan-eu"]) {
+      expectAll(reasoning(p), "plaintext", 4);
+      for (const m of reasoning(p, (r) => r.upstreamId.startsWith("mimo-v2.6"))) expect([m.key, m.reasoning!.toolLoopRequirement?.value]).toEqual([m.key, "hard-error"]);
+    }
+    for (const p of ["xiaomi-anthropic", "xiaomi-token-plan-anthropic", "xiaomi-token-plan-cn-anthropic", "xiaomi-token-plan-eu-anthropic"]) expectAll(reasoning(p), "opaque-provider-state", 4);
+  });
+
+  test("Z.ai / BigModel: reasoning_content on every Chat endpoint -- the current tool loop on the standard API, every turn on the Coding Plan; the Messages endpoints document nothing and stay none", () => {
+    for (const p of ["zai", "zhipu"]) {
+      const covered = reasoning(p, (m) => !(p === "zai" && m.upstreamId.startsWith("glm-4.5")));
+      expectAll(covered, "plaintext", 11);
+      for (const m of covered) expect([m.key, m.reasoning!.replayScope?.value]).toEqual([m.key, "current-tool-loop"]);
+    }
+    // Z.ai's `thinking` is "Only supported by GLM-4.6 series and higher models", and its thinking pages start at 4.6.
+    expectAll(reasoning("zai", (m) => m.upstreamId.startsWith("glm-4.5")), "none", 4);
+    for (const p of ["zai-coding", "zhipu-coding"]) {
+      expectAll(reasoning(p), "plaintext", 2);
+      for (const m of reasoning(p)) expect([m.key, m.reasoning!.replayScope?.value]).toEqual([m.key, "all-turns"]);
+    }
+    for (const p of ["zai-anthropic", "zhipu-anthropic", "zai-coding-anthropic", "zhipu-coding-anthropic"]) expectAll(reasoning(p), "none", 2);
+  });
+
+  test("Google: thought signatures on the native API and Vertex (every Gemini row) and on the OpenAI-compatible endpoint for Gemini 3 and 4; Gemini 2.5 there documents none", () => {
+    expectAll(reasoning("google", (m) => m.upstreamId.startsWith("gemini-")), "opaque-provider-state", 10);
+    expectAll(reasoning("vertex", (m) => m.upstreamId.startsWith("gemini-")), "opaque-provider-state", 13);
+    const compat3 = reasoning("google-openai", (m) => /^gemini-(3|4)/.test(m.upstreamId));
+    expectAll(compat3, "opaque-provider-state", 9);
+    for (const m of compat3) expect([m.key, m.reasoning!.toolLoopRequirement?.value, m.reasoning!.replayScope?.value]).toEqual([m.key, "hard-error", "current-turn"]);
+    expectAll(reasoning("google-openai", (m) => m.upstreamId.startsWith("gemini-2.5")), "none", 3);
+  });
+
+  test("xAI: encrypted reasoning on the Responses API; the subscription proxy's Chat Completions has no replay field", () => {
+    expectAll(reasoning("xai"), "opaque-provider-state", 7);
+    expectAll(reasoning("xai-oauth"), "none", 3);
+  });
+
+  test("Mistral: the ThinkChunk, replayed inside the assistant content", () => {
+    expectAll(reasoning("mistral"), "plaintext", 4);
+  });
+
+  test("Meta: none on its Chat Completions (reasoning redacted to empty), encrypted thinking on its Messages protocol", () => {
+    expectAll(reasoning("meta"), "none", 5);
+    expectAll(reasoning("meta-anthropic"), "opaque-provider-state", 3);
+  });
+
+  test("DeepSeek: reasoning_content on its Chat API, thinking blocks on its Anthropic API", () => {
+    expectAll(reasoning("deepseek"), "plaintext", 2);
+    expectAll(reasoning("deepseek-anthropic"), "opaque-provider-state", 2);
+  });
+
+  test("OpenAI: encrypted reasoning items on every Responses reasoning row (the adapter is always `store: false`)", () => {
+    expectAll(reasoning("openai"), "opaque-provider-state", 24);
+  });
+
+  test("Alibaba Model Studio / Qwen Cloud: preserve_thinking models and GLM-5.x are plaintext on the documented pay-as-you-go hosts, the same model alike on each; the rest, the Token Plan and the Coding Plan are none", () => {
+    const preserve = /^(qwen3\.6-(plus|flash)|qwen3\.7-(max|plus|flash)|qwen3\.8-(max|flash|omni-flash)|kimi-k2\.6|kimi-k2\.7-code)(-[0-9-]+)?$/;
+    const glm = /^glm-5(\.[123])?$/;
+    // The parameter references document the standard compatible-mode base only; nothing is claimed on the plans' hosts.
+    expectAll(reasoning("qwen-cloud-token-plan"), "none", 11);
+    for (const p of ["alibaba", "alibaba-cn", "qwen-cloud"]) {
+      expectAll(reasoning(p, (m) => preserve.test(m.upstreamId) || glm.test(m.upstreamId)), "plaintext", 4);
+      expectAll(reasoning(p, (m) => !preserve.test(m.upstreamId) && !glm.test(m.upstreamId)), "none", 1);
+    }
+    // The inconsistency the audit was asked about: one model, one contract, on both hosts.
+    expect(row("alibaba/qwen3.8-flash").reasoning!.continuation).toBe("plaintext");
+    expect(row("qwen-cloud/qwen3.8-flash").reasoning!.continuation).toBe("plaintext");
+    for (const p of ["qwen-coding", "qwen-coding-cn"]) expectAll(reasoning(p), "none", 10);
+    for (const p of ["alibaba-anthropic", "alibaba-cn-anthropic", "qwen-coding-anthropic", "qwen-coding-cn-anthropic", "qwen-token-plan-anthropic"]) expectAll(reasoning(p), "none", 10);
+  });
+
+  test("Tencent: TokenHub's hy3 replays reasoning_content; nothing is claimed for hy4-preview or on the LKEAP plan hosts", () => {
+    for (const p of ["tencent-tokenhub", "tencent-tokenhub-intl"]) {
+      expectAll(reasoning(p, (m) => m.upstreamId === "hy3"), "plaintext", 1);
+      for (const m of reasoning(p, (r) => r.upstreamId === "hy3")) expect([m.key, m.reasoning!.readableState?.value, JSON.stringify(m.reasoning).includes("hy4-preview")]).toEqual([m.key, "full-exposed", false]);
+    }
+    // No page covers them: `none`, so the label claims no state the adapter does not replay.
+    for (const m of [...reasoning("tencent-tokenhub", (r) => r.upstreamId === "hy4-preview"), ...reasoning("tencent-tokenhub-intl", (r) => r.upstreamId === "hy4-preview"), ...reasoning("tencent-token-plan", (r) => /^(hy|kimi-)/.test(r.upstreamId))]) {
+      expect([m.key, m.reasoning!.continuation, m.reasoning!.readableState]).toEqual([m.key, "none", undefined]);
+    }
+    expectAll(reasoning("tencent-token-plan", (m) => /^(deepseek|glm|minimax)-/.test(m.upstreamId)), "none", 9);
+    expectAll(reasoning("tencent-coding"), "none", 1);
+  });
+
+  test("Resellers: plaintext only where the host's own docs document the replay", () => {
+    expectAll(reasoning("fireworks"), "plaintext", 5);
+    expectAll(reasoning("cerebras", (m) => m.upstreamId === "qwen-3.8-27b"), "plaintext", 1);
+    expectAll(reasoning("qianfan", (m) => ["ernie-5.0", "ernie-5.0-thinking-preview"].includes(m.upstreamId)), "plaintext", 2);
+    const arkRaw = new Set(["doubao-seed-2-0-lite-260215", "doubao-seed-2-0-mini-260215", "doubao-seed-2-0-pro-260215", "doubao-seed-2-0-code-preview-260215", "deepseek-v4-pro-260425", "deepseek-v4-flash-ga-260731", "glm-5-2-260617"]);
+    for (const p of ["doubao", "volcengine-agent-plan"]) {
+      expectAll(reasoning(p, (m) => arkRaw.has(m.upstreamId)), "plaintext", 4);
+      // The summary models need `encrypted_content` back, a field whose streamed shape is undocumented.
+      expectAll(reasoning(p, (m) => !arkRaw.has(m.upstreamId)), "none", 2);
+    }
+    for (const p of ["nvidia", "novita", "deepinfra", "groq", "together", "chutes", "ollama-cloud", "stepfun", "siliconflow", "volcengine-coding-plan", "byteplus"]) expectAll(reasoning(p), "none", 1);
   });
 });

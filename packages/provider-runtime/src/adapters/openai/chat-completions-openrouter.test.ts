@@ -182,6 +182,19 @@ describe("W7: reasoning_details", () => {
     ]);
   });
 
+  test("2026-10-29: text fragments at one index join across interleaved encrypted entries; each encrypted entry is a whole blob, never joined", () => {
+    const acc = new ReasoningDetailsAccumulator();
+    acc.add([{ type: "reasoning.text", text: "Check ", format: "google-gemini-v1", index: 0 }]);
+    acc.add([{ type: "reasoning.encrypted", data: "Q2lR", id: "tool_lookup_0", format: "google-gemini-v1", index: 0 }]);
+    acc.add([{ type: "reasoning.text", text: "the forecast.", format: "google-gemini-v1", index: 0 }]);
+    acc.add([{ type: "reasoning.encrypted", data: "x0Zz", index: 0 }]);
+    expect(acc.complete).toEqual([
+      { type: "reasoning.text", text: "Check the forecast.", format: "google-gemini-v1", index: 0 },
+      { type: "reasoning.encrypted", data: "Q2lR", id: "tool_lookup_0", format: "google-gemini-v1", index: 0 },
+      { type: "reasoning.encrypted", data: "x0Zz", index: 0 },
+    ]);
+  });
+
   test("the documented Claude stream: `reasoning` text beside `reasoning_details` (text + signature, summary, encrypted [REDACTED]) -- every entry captured verbatim", () => {
     const chunk = (delta: Record<string, unknown>, finish: string | null = null) => JSON.stringify({ id: "gen-x", choices: [{ index: 0, delta, finish_reason: finish }] });
     const mapper = new ChatStreamMapper(false, { captureReasoningDetails: true });
