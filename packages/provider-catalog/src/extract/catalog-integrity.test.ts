@@ -119,6 +119,41 @@ describe("the seed is fully replaced", () => {
     expect(codex.pricing).toBeUndefined();
     expect([api.contextWindow!.value, api.maxInputTokens!.value, codex.contextWindow!.value]).toEqual([1050000, 922000, 872000]);
   });
+
+  test("2026-10-29 refresh: GPT-6.1 Terra, Kimi K3.1 Pro, MiniMax M3.1 Flash and Gemini 4 Argon keep each surface's own facts", () => {
+    const row = (key: string) => catalog.models.find((m) => m.key === key)!;
+    // GPT-6.1 Terra: unlike 6.1 Sol it DOES document `none`; the Codex catalogue offers low..max only. The >272K
+    // surcharge (2x input/cache, 1.5x output) rides as one long-context tier. No `gpt` slot moves.
+    const terra = row("openai/gpt-6.1-terra");
+    expect(terra.reasoning!.efforts).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+    expect(terra.reasoning!.defaultEffort).toBe("medium");
+    expect(terra.reasoning!.perMessageEffort?.value).toEqual({ item: "configuration_update" });
+    expect(terra.pricing!.value).toEqual({
+      inputPerMTokUsd: 1, outputPerMTokUsd: 5, cacheReadPerMTokUsd: 0.05, cacheWritePerMTokUsd: 1.25,
+      longContextTiers: [{ minPromptTokens: 272001, inputPerMTokUsd: 2, outputPerMTokUsd: 7.5, cacheReadPerMTokUsd: 0.1, cacheWritePerMTokUsd: 2.5 }],
+    });
+    const codexTerra = row("codex-oauth/gpt-6.1-terra");
+    expect([codexTerra.reasoning!.efforts, codexTerra.reasoning!.defaultEffort, codexTerra.pricing]).toEqual([["low", "medium", "high", "xhigh", "max"], "low", undefined]);
+    expect(catalog.families.find((f) => f.id === "gpt")!.slots.some((s) => s.canonicalModelId === "gpt-6.1-terra")).toBe(false);
+    // Kimi K3.1 Pro: always thinks, low/high/max (default max) on the open platform; Kimi Code defaults to high.
+    const kimi = row("moonshot/kimi-k3.1-pro");
+    expect([kimi.reasoning!.efforts, kimi.reasoning!.defaultEffort]).toEqual([["low", "high", "max"], "max"]);
+    expect(kimi.pricing!.value).toEqual({ inputPerMTokUsd: 2, outputPerMTokUsd: 10, cacheReadPerMTokUsd: 0.2, cacheWritePerMTokUsd: 2 });
+    expect(row("kimi-coding-intl-openai/k3.1-pro").reasoning!.defaultEffort).toBe("high");
+    expect(row("kimi-coding-intl-openai/k3.1-pro").pricing).toBeUndefined();
+    // MiniMax M3.1 Flash: graded effort on BOTH dialects; the Anthropic dialect sends it as output_config.effort.
+    const mm = row("minimax/MiniMax-M3.1-Flash");
+    expect([mm.reasoning!.efforts, mm.reasoning!.defaultEffort]).toEqual([["low", "medium", "high", "xhigh", "max"], "max"]);
+    expect(mm.pricing!.value).toEqual({ inputPerMTokUsd: 0.15, outputPerMTokUsd: 0.6, cacheReadPerMTokUsd: 0.015 });
+    expect(row("minimax-anthropic/MiniMax-M3.1-Flash").reasoning!.effortRequest?.value).toEqual({ field: "output_config.effort" });
+    expect(mm.reasoning!.effortRequest).toBeUndefined();
+    expect(row("minimax-token-plan/MiniMax-M3.1-Flash").pricing).toBeUndefined();
+    // Gemini 4 Argon: the SYNCHRONOUS output cap (long decode needs background=True), the introductory price.
+    const argon = row("google/gemini-4-argon");
+    expect([argon.contextWindow!.value, argon.maxOutputTokens!.value, argon.reasoning!.efforts]).toEqual([1048576, 65536, ["low", "medium", "high"]]);
+    expect(argon.pricing!.value).toEqual({ inputPerMTokUsd: 2, outputPerMTokUsd: 10, cacheReadPerMTokUsd: 0.1 });
+    expect(row("vertex/gemini-4-argon").pricing).toBeUndefined();
+  });
 });
 
 describe("pricing (R6-H, R6-9)", () => {
@@ -129,6 +164,7 @@ describe("pricing (R6-H, R6-9)", () => {
       // 2026-09-25 refresh: regenerated from the shipped catalog after the first-party provider refresh (Codex-mapped,
       // Claude-reviewed evidence; every price is an `official-doc` page with its URL and instant, CNY rows converted with the rate stated in sourceRef).
       // cat34 (2026-09-27, SDK 0.0.34): regenerated again after the catalog refresh -- filled prices on existing rows, new rows (DeepInfra, gateway/host gaps, new providers); every new price is the SERVING provider's own page or public list, CNY/EUR converted at the rate its sourceRef states.
+      // 2026-10-29 refresh: regenerated after adding GPT-6.1 Terra, Kimi K3.1 Pro, MiniMax M3.1 Flash, Gemini 4 Argon and the OpenRouter-discovered current models; every new price is the serving provider's own page or public list (CNY at 0.149).
       "agnes/agnes-2.5-flash",
       "aimlapi/gpt-4o",
       "alibaba-anthropic/qwen3-coder-next",
@@ -169,8 +205,10 @@ describe("pricing (R6-H, R6-9)", () => {
       "alibaba-cn/qwen3.6-35b-a3b",
       "alibaba-cn/qwen3.6-flash",
       "alibaba-cn/qwen3.6-plus",
+      "alibaba-cn/qwen3.7-flash",
       "alibaba-cn/qwen3.7-max",
       "alibaba-cn/qwen3.7-plus",
+      "alibaba-cn/qwen3.8-2.4t-a95b",
       "alibaba-cn/qwen3.8-flash",
       "alibaba-cn/qwen3.8-max",
       "alibaba/deepseek-v4-flash",
@@ -189,13 +227,18 @@ describe("pricing (R6-H, R6-9)", () => {
       "alibaba/qwen3.6-35b-a3b",
       "alibaba/qwen3.6-flash",
       "alibaba/qwen3.6-plus",
+      "alibaba/qwen3.7-flash",
       "alibaba/qwen3.7-max",
       "alibaba/qwen3.7-plus",
+      "alibaba/qwen3.8-2.4t-a95b",
       "alibaba/qwen3.8-flash",
       "alibaba/qwen3.8-max",
       "alibaba/qwen3.8-omni-flash",
       "ant-ling/Ling-2.6-1T",
       "ant-ling/Ling-2.6-flash",
+      "ant-ling/Ling-3.0-flash",
+      "ant-ling/Ling-3.0-flash-VL",
+      "ant-ling/Ling-3.1-flash",
       "ant-ling/Ring-2.6-1T",
       "anthropic/claude-fable-5",
       "anthropic/claude-fable-5-1",
@@ -463,6 +506,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "google-openai/gemini-3.6-flash",
       "google-openai/gemini-3.7-flash",
       "google-openai/gemini-3.8-flash",
+      "google-openai/gemini-4-argon",
       "google/gemini-2.5-flash",
       "google/gemini-2.5-flash-lite",
       "google/gemini-2.5-pro",
@@ -474,11 +518,14 @@ describe("pricing (R6-H, R6-9)", () => {
       "google/gemini-3.6-flash",
       "google/gemini-3.7-flash",
       "google/gemini-3.8-flash",
+      "google/gemini-4-argon",
       "groq/openai/gpt-oss-120b",
       "groq/openai/gpt-oss-20b",
       "groq/openai/gpt-oss-safeguard-20b",
       "groq/qwen/qwen3.8-27b",
       "inception/mercury-2",
+      "inception/mercury-2.5",
+      "inception/mercury-3",
       "kilocode/anthropic/claude-opus-5",
       "kilocode/google/gemini-3.1-pro-preview",
       "kilocode/openai/gpt-5.6-sol",
@@ -499,6 +546,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "minimax-anthropic/MiniMax-M2.7",
       "minimax-anthropic/MiniMax-M2.7-highspeed",
       "minimax-anthropic/MiniMax-M3",
+      "minimax-anthropic/MiniMax-M3.1-Flash",
       "minimax-cn-anthropic/MiniMax-M2",
       "minimax-cn-anthropic/MiniMax-M2.1",
       "minimax-cn-anthropic/MiniMax-M2.1-highspeed",
@@ -507,6 +555,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "minimax-cn-anthropic/MiniMax-M2.7",
       "minimax-cn-anthropic/MiniMax-M2.7-highspeed",
       "minimax-cn-anthropic/MiniMax-M3",
+      "minimax-cn-anthropic/MiniMax-M3.1-Flash",
       "minimax-cn/MiniMax-M2",
       "minimax-cn/MiniMax-M2.1",
       "minimax-cn/MiniMax-M2.1-highspeed",
@@ -515,6 +564,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "minimax-cn/MiniMax-M2.7",
       "minimax-cn/MiniMax-M2.7-highspeed",
       "minimax-cn/MiniMax-M3",
+      "minimax-cn/MiniMax-M3.1-Flash",
       "minimax/MiniMax-M2",
       "minimax/MiniMax-M2.1",
       "minimax/MiniMax-M2.1-highspeed",
@@ -523,6 +573,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "minimax/MiniMax-M2.7",
       "minimax/MiniMax-M2.7-highspeed",
       "minimax/MiniMax-M3",
+      "minimax/MiniMax-M3.1-Flash",
       "mistral/codestral-2508",
       "mistral/codestral-latest",
       "mistral/ministral-14b-2512",
@@ -535,15 +586,23 @@ describe("pricing (R6-H, R6-9)", () => {
       "mistral/mistral-small-2603",
       "mistral/mistral-small-latest",
       "moonshot-anthropic/kimi-k3",
+      "moonshot-anthropic/kimi-k3.1-pro",
+      "moonshot-anthropic/kimi-k3.1-pro-highspeed",
       "moonshot-cn-anthropic/kimi-k3",
+      "moonshot-cn-anthropic/kimi-k3.1-pro",
+      "moonshot-cn-anthropic/kimi-k3.1-pro-highspeed",
       "moonshot-cn/kimi-k2.6",
       "moonshot-cn/kimi-k2.7-code",
       "moonshot-cn/kimi-k2.7-code-highspeed",
       "moonshot-cn/kimi-k3",
+      "moonshot-cn/kimi-k3.1-pro",
+      "moonshot-cn/kimi-k3.1-pro-highspeed",
       "moonshot/kimi-k2.6",
       "moonshot/kimi-k2.7-code",
       "moonshot/kimi-k2.7-code-highspeed",
       "moonshot/kimi-k3",
+      "moonshot/kimi-k3.1-pro",
+      "moonshot/kimi-k3.1-pro-highspeed",
       "novita/deepseek/deepseek-v3.2",
       "novita/deepseek/deepseek-v4-flash",
       "novita/deepseek/deepseek-v4-flash-0731",
@@ -615,6 +674,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "openai/gpt-6-luna",
       "openai/gpt-6-sol",
       "openai/gpt-6.1-sol",
+      "openai/gpt-6.1-terra",
       "openai/o3",
       "openai/o3-mini",
       "openai/o4-mini",
@@ -626,17 +686,52 @@ describe("pricing (R6-H, R6-9)", () => {
       "openrouter/anthropic/claude-opus-5.5",
       "openrouter/anthropic/claude-sonnet-5",
       "openrouter/anthropic/claude-sonnet-5.5",
+      "openrouter/bytedance-seed/seed-2-1-turbo",
+      "openrouter/cohere/command-a-plus",
       "openrouter/deepseek/deepseek-v4-pro",
+      "openrouter/deepseek/deepseek-v4-pro-0813",
       "openrouter/deepseek/deepseek-v4.1-flash",
+      "openrouter/deepseek/deepseek-v4.1-flash-1017",
+      "openrouter/elorian/glimpse",
+      "openrouter/fireworks/ember-1",
       "openrouter/google/gemini-3.5-flash",
+      "openrouter/google/gemini-3.5-flash-lite",
       "openrouter/google/gemini-3.6-flash",
       "openrouter/google/gemini-3.7-flash",
       "openrouter/google/gemini-3.8-flash",
+      "openrouter/google/gemini-4-argon",
+      "openrouter/google/gemma-4-26b-a4b-it",
+      "openrouter/google/gemma-4-31b-it",
+      "openrouter/ibm-granite/granite-4.2-8b",
+      "openrouter/inception/mercury-2.5",
+      "openrouter/inception/mercury-3",
+      "openrouter/inclusionai/ling-3.0-flash",
+      "openrouter/inclusionai/ling-3.0-flash-vl",
+      "openrouter/inclusionai/ling-3.1-flash",
+      "openrouter/liquid/lfm-2.5-2.6b",
+      "openrouter/liquid/lfm-2.5-24b-a2b",
+      "openrouter/meituan/longcat-2.0",
       "openrouter/meta/muse-glimmer-30b",
       "openrouter/meta/muse-spark-1.3",
       "openrouter/meta/muse-spark-1.3-contributor",
+      "openrouter/meta/muse-spark-open",
       "openrouter/minimax/minimax-m3",
+      "openrouter/minimax/minimax-m3.1-flash",
+      "openrouter/mistralai/codestral-2508",
+      "openrouter/mistralai/ministral-14b-2512",
+      "openrouter/mistralai/ministral-3b-2512",
+      "openrouter/mistralai/ministral-8b-2512",
+      "openrouter/mistralai/mistral-large-2512",
+      "openrouter/mistralai/mistral-medium-3-5",
+      "openrouter/mistralai/mistral-small-2603",
+      "openrouter/moondream/moondream3.1-9b-a2b",
       "openrouter/moonshotai/kimi-k3",
+      "openrouter/moonshotai/kimi-k3.1-pro",
+      "openrouter/nex-agi/nex-n2.5-mini",
+      "openrouter/nex-agi/nex-n2.5-pro",
+      "openrouter/nvidia/nemotron-3-ultra-550b-a55b",
+      "openrouter/nvidia/nemotron-3.5-lightning",
+      "openrouter/nvidia/nemotron-3.5-super-vl",
       "openrouter/openai/gpt-4.1",
       "openrouter/openai/gpt-5.4",
       "openrouter/openai/gpt-5.4-mini",
@@ -651,13 +746,37 @@ describe("pricing (R6-H, R6-9)", () => {
       "openrouter/openai/gpt-6-luna",
       "openrouter/openai/gpt-6-sol",
       "openrouter/openai/gpt-6.1-sol",
+      "openrouter/openai/gpt-6.1-terra",
+      "openrouter/particle-ai/particle-1",
+      "openrouter/perceptron/perceptron-mk1.5",
+      "openrouter/prism-ml/ternary-bonsai-2-27b",
+      "openrouter/prism-ml/ternary-bonsai-2-9b",
+      "openrouter/qwen/qwen3.7-flash",
       "openrouter/qwen/qwen3.7-max",
+      "openrouter/qwen/qwen3.7-plus",
+      "openrouter/qwen/qwen3.8-2.4t-a95b",
+      "openrouter/qwen/qwen3.8-27b",
+      "openrouter/qwen/qwen3.8-flash",
       "openrouter/qwen/qwen3.8-max-0902",
+      "openrouter/qwen/qwen3.8-omni-flash",
+      "openrouter/reflection/beam-1.0-501b-a23b",
+      "openrouter/sakana/sakana-namazu",
       "openrouter/stealth/space-bunny-alpha",
+      "openrouter/stepfun/step-3.7-flash",
+      "openrouter/tencent/hy3",
+      "openrouter/thinkingmachines/inkling",
+      "openrouter/thinkingmachines/inkling-small",
+      "openrouter/upstage/solar-mini4",
+      "openrouter/upstage/solar-pro4",
       "openrouter/x-ai/grok-4.6",
       "openrouter/x-ai/grok-4.7",
+      "openrouter/x-ai/grok-build-0.1",
+      "openrouter/xiaomi/mimo-v2.6-flash",
+      "openrouter/xiaomi/mimo-v2.6-pro",
+      "openrouter/xiaomi/mimo-v2.6-pro-ultraspeed",
       "openrouter/z-ai/glm-5.3",
       "openrouter/z-ai/glm-5.3-flash",
+      "openrouter/z-ai/glm-5.3-flashx",
       "ovhcloud/Meta-Llama-3_3-70B-Instruct",
       "ovhcloud/Qwen2.5-VL-72B-Instruct",
       "ovhcloud/Qwen3.5-397B-A17B",
@@ -698,8 +817,11 @@ describe("pricing (R6-H, R6-9)", () => {
       "qwen-cloud/qwen3.6-27b",
       "qwen-cloud/qwen3.6-35b-a3b",
       "qwen-cloud/qwen3.6-plus",
+      "qwen-cloud/qwen3.7-flash",
       "qwen-cloud/qwen3.7-max-2026-06-08",
       "qwen-cloud/qwen3.7-plus",
+      "qwen-cloud/qwen3.8-2.4t-a95b",
+      "qwen-cloud/qwen3.8-flash",
       "qwen-cloud/qwen3.8-max",
       "reka/reka-edge-2603",
       "reka/reka-flash",
@@ -1845,10 +1967,11 @@ describe("SDK 0.0.4: codex-oauth serves the whole GPT-5.6 slot row", () => {
       .map((m) => m.key)
       .sort();
 
-  test("the provider lists the three GPT-5.6 models, the three GPT-6 models and GPT-6.1 Sol, and nothing else", () => {
+  test("the provider lists the three GPT-5.6 models, the three GPT-6 models, GPT-6.1 Sol and GPT-6.1 Terra, and nothing else", () => {
     // 2026-09-25 refresh: GPT-6 Sol and Luna joined Astra in Codex on 2026-09-22 (the server-delivered
     // ~/.codex/models_cache.json lists all six), and the `gpt` family's sol/luna slots moved to them (user ruling).
     // 2026-10-07: GPT-6.1 Sol (released 2026-09-29) heads that list, and the `sol` slot follows it.
+    // 2026-10-29: GPT-6.1 Terra (released 2026-10-26; codex-rs models.json 126a0ee bundles it) joins; no slot moves.
     expect(codexKeys()).toEqual([
       "codex-oauth/gpt-5.6-luna",
       "codex-oauth/gpt-5.6-sol",
@@ -1857,6 +1980,7 @@ describe("SDK 0.0.4: codex-oauth serves the whole GPT-5.6 slot row", () => {
       "codex-oauth/gpt-6-luna",
       "codex-oauth/gpt-6-sol",
       "codex-oauth/gpt-6.1-sol",
+      "codex-oauth/gpt-6.1-terra",
     ]);
   });
 
@@ -1979,7 +2103,8 @@ test("OpenRouter's interactive GPT-5 rows keep their provider-specific reasoning
     ["openrouter/openai/gpt-5.4-pro", ["xhigh", "high", "medium"], { inputPerMTokUsd: 30, outputPerMTokUsd: 180 }],
     ["openrouter/openai/gpt-5.5", ["xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 5, outputPerMTokUsd: 30, cacheReadPerMTokUsd: 0.5 }],
     ["openrouter/openai/gpt-5.5-pro", ["xhigh", "high", "medium"], { inputPerMTokUsd: 30, outputPerMTokUsd: 180 }],
-    ["openrouter/openai/gpt-5.6-sol", ["max", "xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 2, outputPerMTokUsd: 10, cacheReadPerMTokUsd: 0.2, cacheWritePerMTokUsd: 2.5 }],
+    // 2026-10-29: re-priced to OpenRouter's current entry, which now matches OpenAI's own gpt-5.6-sol list price.
+    ["openrouter/openai/gpt-5.6-sol", ["max", "xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 4, outputPerMTokUsd: 20, cacheReadPerMTokUsd: 0.4, cacheWritePerMTokUsd: 5, longContextTiers: [{ minPromptTokens: 272000, inputPerMTokUsd: 8, outputPerMTokUsd: 30, cacheReadPerMTokUsd: 0.8, cacheWritePerMTokUsd: 10 }] }],
     ["openrouter/openai/gpt-5.6-terra", ["max", "xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 2, outputPerMTokUsd: 12, cacheReadPerMTokUsd: 0.2, cacheWritePerMTokUsd: 2.5 }],
     ["openrouter/openai/gpt-5.6-luna", ["max", "xhigh", "high", "medium", "low", "none"], { inputPerMTokUsd: 0.2, outputPerMTokUsd: 1.2, cacheReadPerMTokUsd: 0.02, cacheWritePerMTokUsd: 0.25 }],
   ] as const) {
