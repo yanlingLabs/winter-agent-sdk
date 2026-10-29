@@ -58173,7 +58173,16 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -58257,7 +58266,16 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -58342,9 +58360,20 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate",
       "canonicalModelId": "k3.1-pro",
       "modelFamily": "kimi"
@@ -58427,9 +58456,20 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate",
       "canonicalModelId": "k3.1-pro-highspeed",
       "modelFamily": "kimi"
@@ -58505,7 +58545,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59140,7 +59189,16 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59224,7 +59282,16 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -59308,9 +59375,20 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate",
       "canonicalModelId": "k3.1-pro",
       "modelFamily": "kimi"
@@ -59393,9 +59471,20 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate",
       "canonicalModelId": "k3.1-pro-highspeed",
       "modelFamily": "kimi"
@@ -59471,7 +59560,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -61532,7 +61630,9 @@
         "confidence": "declared",
         "observedAt": "2026-10-29T12:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m3.1-flash",
       "modelFamily": "minimax"
@@ -62360,7 +62460,9 @@
         "confidence": "declared",
         "observedAt": "2026-10-29T12:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m3.1-flash",
       "modelFamily": "minimax"
@@ -62692,7 +62794,9 @@
           "observedAt": "2026-10-29T12:00:00Z"
         }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m3.1-flash",
       "modelFamily": "minimax"
@@ -64192,7 +64296,9 @@
           "observedAt": "2026-10-29T12:00:00Z"
         }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate",
       "canonicalModelId": "minimax-m3.1-flash",
       "modelFamily": "minimax"
@@ -66552,7 +66658,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"Reasoning effort: low, high, or max; default max. Changing the level breaks prefix-cache hits, so decide it before the session starts.\" The request schema defines no `thinking` field (thinking appears only as response content blocks).",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -66656,7 +66771,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"Reasoning effort: low, high, or max; default max. Changing the level breaks prefix-cache hits, so decide it before the session starts.\" The request schema defines no `thinking` field (thinking appears only as response content blocks).",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -66760,7 +66884,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"Reasoning effort: low, high, or max; default max. Changing the level breaks prefix-cache hits, so decide it before the session starts.\" The request schema defines no `thinking` field (thinking appears only as response content blocks).",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -66864,7 +66997,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.com/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"本接口当前支持 `kimi-k3.1-pro`、`kimi-k3.1-pro-highspeed` 和 `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"推理强度，支持 low、high、max，默认 max。\" The request schema defines no `thinking` field.",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -66968,7 +67110,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.com/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"本接口当前支持 `kimi-k3.1-pro`、`kimi-k3.1-pro-highspeed` 和 `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"推理强度，支持 low、high、max，默认 max。\" The request schema defines no `thinking` field.",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -67072,7 +67223,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.com/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"本接口当前支持 `kimi-k3.1-pro`、`kimi-k3.1-pro-highspeed` 和 `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"推理强度，支持 low、high、max，默认 max。\" The request schema defines no `thinking` field.",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {

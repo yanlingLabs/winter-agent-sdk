@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLAUDE_FAMILY_ID, CLAUDE_RESERVED_SLOT_NAMES, familyIdOf, loadCatalog, rowsForCanonicalId, scanForSecrets, stampFamilyFields, validateCatalog } from "../index.ts";
 import { UNKNOWN_CITATION_RE } from "../validate.ts";
-import type { WinterModelDescriptor, WinterProviderDescriptor } from "../types.ts";
+import type { ModelPricing, WinterModelDescriptor, WinterProviderDescriptor } from "../types.ts";
 import upstreamLayer from "../../generated/upstream-layer.json" with { type: "json" };
 import rejectionsLedger from "../../generated/rejections.json" with { type: "json" };
 import denominator from "../../generated/denominator.json" with { type: "json" };
@@ -153,6 +153,34 @@ describe("the seed is fully replaced", () => {
     expect([argon.contextWindow!.value, argon.maxOutputTokens!.value, argon.reasoning!.efforts]).toEqual([1048576, 65536, ["low", "medium", "high"]]);
     expect(argon.pricing!.value).toEqual({ inputPerMTokUsd: 2, outputPerMTokUsd: 10, cacheReadPerMTokUsd: 0.1 });
     expect(row("vertex/gemini-4-argon").pricing).toBeUndefined();
+  });
+
+  test("2026-10-29 review: Kimi's Anthropic-dialect rows send effort as output_config.effort, and always-on rows omit `thinking: disabled`", () => {
+    const row = (key: string) => catalog.models.find((m) => m.key === key)!;
+    // Kimi's Messages request schema has no `thinking` field; effort is `output_config.effort` (low/high/max).
+    for (const key of [
+      "moonshot-anthropic/kimi-k3", "moonshot-anthropic/kimi-k3.1-pro", "moonshot-anthropic/kimi-k3.1-pro-highspeed",
+      "moonshot-cn-anthropic/kimi-k3", "moonshot-cn-anthropic/kimi-k3.1-pro", "moonshot-cn-anthropic/kimi-k3.1-pro-highspeed",
+      ...["kimi-coding", "kimi-coding-intl"].flatMap((p) => ["k3.1-pro", "k3.1-pro-highspeed", "k3", "k3-256k", "kimi-for-coding"].map((m) => `${p}/${m}`)),
+    ]) {
+      const er = row(key).reasoning!.effortRequest!;
+      expect([key, er.value]).toEqual([key, { field: "output_config.effort" }]);
+      // The Kimi Code page never names the wire field, so its rows carry it as an inference.
+      expect([key, er.confidence]).toEqual([key, key.startsWith("kimi-coding") ? "inferred" : "declared"]);
+      expect(er.sourceRef).toContain(key.startsWith("moonshot-cn-") ? "https://platform.kimi.com/" : "https://");
+    }
+    // K2.7 Code Highspeed has no adjustable effort, so nothing to send.
+    expect(row("kimi-coding/kimi-for-coding-highspeed").reasoning!.effortRequest).toBeUndefined();
+    // A documented 400 on `thinking: disabled` -> the token the Anthropic adapter reads to omit the field.
+    for (const key of [
+      "minimax-anthropic/MiniMax-M3.1-Flash", "minimax-cn-anthropic/MiniMax-M3.1-Flash",
+      "minimax-token-plan-anthropic/MiniMax-M3.1-Flash", "minimax-cn-token-plan-anthropic/MiniMax-M3.1-Flash",
+      "kimi-coding/k3.1-pro", "kimi-coding/k3.1-pro-highspeed", "kimi-coding-intl/k3.1-pro", "kimi-coding-intl/k3.1-pro-highspeed",
+    ]) {
+      expect([key, row(key).unsupportedParameters.includes("thinking.type.disabled")]).toEqual([key, true]);
+    }
+    // K3 on Kimi Code serves a disabled request (via K2.8 Preview), so it is NOT marked.
+    expect(row("kimi-coding/k3").unsupportedParameters).not.toContain("thinking.type.disabled");
   });
 });
 
@@ -2114,7 +2142,8 @@ test("OpenRouter's interactive GPT-5 rows keep their provider-specific reasoning
       key.slice("openrouter/".length),
       Array.from(efforts),
       "medium",
-      pricing,
+      // `as const` makes the table's tier list a readonly tuple; the VALUES asserted are unchanged.
+      pricing as unknown as ModelPricing,
     ]);
   }
 });

@@ -3508,7 +3508,7 @@
       "canonicalModelId": "kimi-k3",
       "displayName": "Kimi K3 (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Kimi's current Coding Plan document makes context an entitlement: Plus/Moderato members receive up to 256K, while Pro/Allegretto and above receive 1M. The one-valued schema records the lowest advertised entitlement and discloses the higher tier in evidence. — 2026-09-25 refresh: Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs. Context is plan-dependent: 1M only Pro/Allegretto or higher, otherwise 256K. Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe. cat34 (2026-09-27): maxOutputTokens filled from official evidence (see each field's sourceRef).",
+      "$comment": "Kimi's current Coding Plan document makes context an entitlement: Plus/Moderato members receive up to 256K, while Pro/Allegretto and above receive 1M. The one-valued schema records the lowest advertised entitlement and discloses the higher tier in evidence. — 2026-09-25 refresh: Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs. Context is plan-dependent: 1M only Pro/Allegretto or higher, otherwise 256K. Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe. cat34 (2026-09-27): maxOutputTokens filled from official evidence (see each field's sourceRef). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -3574,7 +3574,16 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -3592,7 +3601,7 @@
       "upstreamId": "kimi-for-coding",
       "displayName": "Kimi K2.8 Preview (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "The stable `kimi-for-coding` ID is now K2.8 Preview; the update happens in place, so it remains distinct from the token-billed Moonshot platform model ids. — 2026-09-25 refresh: Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "$comment": "The stable `kimi-for-coding` ID is now K2.8 Preview; the update happens in place, so it remains distinct from the token-billed Moonshot platform model ids. — 2026-09-25 refresh: Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe. — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -3658,7 +3667,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -16895,7 +16913,7 @@
       "canonicalModelId": "kimi-k3",
       "displayName": "Kimi K3 256K (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe. — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -16960,7 +16978,16 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -24481,7 +24508,7 @@
       "upstreamId": "kimi-k3",
       "displayName": "Kimi K3 (Anthropic dialect)",
       "aliases": [],
-      "$comment": "Base https://platform.kimi.ai/docs/api/overview. Messages reference explicitly allows kimi-k3; output_config.effort enum low/high/max default max (see https://platform.kimi.ai/docs/api/messages). Context cache write requires top-level cache_control; message-level markers ignored. Underlying K3 reasoning is always on.",
+      "$comment": "Base https://platform.kimi.ai/docs/api/overview. Messages reference explicitly allows kimi-k3; output_config.effort enum low/high/max default max (see https://platform.kimi.ai/docs/api/messages). Context cache write requires top-level cache_control; message-level markers ignored. Underlying K3 reasoning is always on. — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -24561,7 +24588,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"Reasoning effort: low, high, or max; default max. Changing the level breaks prefix-cache hits, so decide it before the session starts.\" The request schema defines no `thinking` field (thinking appears only as response content blocks).",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -24584,7 +24620,7 @@
       "upstreamId": "k3",
       "displayName": "Kimi K3 (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs. Context is plan-dependent: 1M only Pro/Allegretto or higher, otherwise 256K. Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe. cat34 (2026-09-27): maxOutputTokens filled from official evidence (see each field's sourceRef).",
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs. Context is plan-dependent: 1M only Pro/Allegretto or higher, otherwise 256K. Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe. cat34 (2026-09-27): maxOutputTokens filled from official evidence (see each field's sourceRef). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -24650,7 +24686,16 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -24668,7 +24713,7 @@
       "upstreamId": "k3-256k",
       "displayName": "Kimi K3 256K (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe. — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -24733,7 +24778,16 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -24744,7 +24798,7 @@
       "upstreamId": "kimi-for-coding",
       "displayName": "Kimi K2.8 Preview (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe.",
+      "$comment": "Subscription membership: NO token pricing. China base https://api.kimi.com/coding/; overseas base https://api.kimi.ai/coding/ (https://www.kimi.com/code/docs/en/). Both dialects accept all four IDs. Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys; explicit cross-region key-binding rule not found in docs.  Third-party effort aliases map ultra/max/xhigh→max, high/medium→high, low/minimum/light→low, none disables thinking and routes K3/K2.8 requests to K2.8 non-thinking. Native tool use inferred from official CLI model capabilities, not a direct API probe. — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -24810,7 +24864,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -47548,7 +47611,7 @@
       "upstreamId": "kimi-k3",
       "displayName": "Kimi K3 (CN Anthropic dialect)",
       "aliases": [],
-      "$comment": "https://platform.kimi.com/docs/api/overview — CN host https://api.moonshot.cn/anthropic with /v1/messages using the same platform key. https://platform.kimi.com/ — current CN homepage lists K3, K2.7 Code and K2.6; https://platform.kimi.com/docs/guide/kimi-k2-7-code-quickstart — the CN K2.7 quickstart explicitly names kimi-k2.7-code-highspeed. Base https://platform.kimi.ai/docs/api/overview. Messages reference explicitly allows kimi-k3; output_config.effort enum low/high/max default max (see https://platform.kimi.ai/docs/api/messages). Context cache write requires top-level cache_control; message-level markers ignored. Underlying K3 reasoning is always on. https://platform.kimi.com/docs/guide/kimi-k3-quickstart — CN K3 guide confirms 1M and always-on thinking. Field-level capability evidence from the international Kimi docs is reused where the CN model guide presents the same model/version; CN endpoint and roster independently confirmed.",
+      "$comment": "https://platform.kimi.com/docs/api/overview — CN host https://api.moonshot.cn/anthropic with /v1/messages using the same platform key. https://platform.kimi.com/ — current CN homepage lists K3, K2.7 Code and K2.6; https://platform.kimi.com/docs/guide/kimi-k2-7-code-quickstart — the CN K2.7 quickstart explicitly names kimi-k2.7-code-highspeed. Base https://platform.kimi.ai/docs/api/overview. Messages reference explicitly allows kimi-k3; output_config.effort enum low/high/max default max (see https://platform.kimi.ai/docs/api/messages). Context cache write requires top-level cache_control; message-level markers ignored. Underlying K3 reasoning is always on. https://platform.kimi.com/docs/guide/kimi-k3-quickstart — CN K3 guide confirms 1M and always-on thinking. Field-level capability evidence from the international Kimi docs is reused where the CN model guide presents the same model/version; CN endpoint and roster independently confirmed. — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -47628,7 +47691,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.com/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"本接口当前支持 `kimi-k3.1-pro`、`kimi-k3.1-pro-highspeed` 和 `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"推理强度，支持 low、high、max，默认 max。\" The request schema defines no `thinking` field.",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -100685,7 +100757,7 @@
       "upstreamId": "kimi-k3.1-pro",
       "displayName": "Kimi K3.1 Pro (Anthropic dialect)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Base https://api.moonshot.ai/anthropic (/v1/messages). https://platform.kimi.ai/docs/models lists `kimi-k3.1-pro` as a current model (\"Kimi K3.1 Pro has launched!\"); K3.1 Pro is \"a post-trained version of Kimi K3\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). Access: \"it is unlocked after a successful top-up (minimum $1)\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart; CN: minimum CNY 10, and the CN sign-up voucher does not apply — https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart) — a top-up gate, not an access program. Fixed sampling: \"`temperature=1.0`, `top_p=0.95`, `n=1`, `presence_penalty=0`, and `frequency_penalty=0` are fixed; omit them from requests.\" Thinking is always on (\"You can't — K3.1 Pro always thinks\"); effort is the top-level `reasoning_effort` (Chat) / `output_config.effort` (Messages), low/high/max, default max. \"Return the complete assistant message unchanged in multi-turn conversations and tool calls.\" Mirrors moonshot-anthropic/kimi-k3 field for field (continuation `none`; efforts low/high/max sent the way that row sends them). The Messages schema lists this id (\"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\", https://platform.kimi.ai/docs/api/messages) with `output_config.effort` enum low/high/max, default max; context caching writes need the TOP-LEVEL `cache_control` (\"cache_control markers inside the messages array are ignored\"). Pricing is flat across the 1M window: \"Kimi K3.1 Pro offers a 1M-token context and uses flat pay-as-you-go pricing — there is no tiering by context length\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). The 1h cache-write rate is not representable (one cache-write field: the default 5m TTL is recorded).",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Base https://api.moonshot.ai/anthropic (/v1/messages). https://platform.kimi.ai/docs/models lists `kimi-k3.1-pro` as a current model (\"Kimi K3.1 Pro has launched!\"); K3.1 Pro is \"a post-trained version of Kimi K3\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). Access: \"it is unlocked after a successful top-up (minimum $1)\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart; CN: minimum CNY 10, and the CN sign-up voucher does not apply — https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart) — a top-up gate, not an access program. Fixed sampling: \"`temperature=1.0`, `top_p=0.95`, `n=1`, `presence_penalty=0`, and `frequency_penalty=0` are fixed; omit them from requests.\" Thinking is always on (\"You can't — K3.1 Pro always thinks\"); effort is the top-level `reasoning_effort` (Chat) / `output_config.effort` (Messages), low/high/max, default max. \"Return the complete assistant message unchanged in multi-turn conversations and tool calls.\" Mirrors moonshot-anthropic/kimi-k3 field for field (continuation `none`; efforts low/high/max, sent as `output_config.effort` via `reasoning.effortRequest` on both rows). The Messages schema lists this id (\"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\", https://platform.kimi.ai/docs/api/messages) with `output_config.effort` enum low/high/max, default max; context caching writes need the TOP-LEVEL `cache_control` (\"cache_control markers inside the messages array are ignored\"). Pricing is flat across the 1M window: \"Kimi K3.1 Pro offers a 1M-token context and uses flat pay-as-you-go pricing — there is no tiering by context length\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). The 1h cache-write rate is not representable (one cache-write field: the default 5m TTL is recorded). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -100765,7 +100837,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"Reasoning effort: low, high, or max; default max. Changing the level breaks prefix-cache hits, so decide it before the session starts.\" The request schema defines no `thinking` field (thinking appears only as response content blocks).",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -100893,7 +100974,7 @@
       "upstreamId": "kimi-k3.1-pro",
       "displayName": "Kimi K3.1 Pro (CN Anthropic dialect)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Base https://api.moonshot.cn/anthropic (/v1/messages). https://platform.kimi.com/docs/models lists `kimi-k3.1-pro` as a current model (\"Kimi K3.1 Pro has launched!\"); K3.1 Pro is \"a post-trained version of Kimi K3\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). Access: \"it is unlocked after a successful top-up (minimum $1)\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart; CN: minimum CNY 10, and the CN sign-up voucher does not apply — https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart) — a top-up gate, not an access program. Fixed sampling: \"`temperature=1.0`, `top_p=0.95`, `n=1`, `presence_penalty=0`, and `frequency_penalty=0` are fixed; omit them from requests.\" Thinking is always on (\"You can't — K3.1 Pro always thinks\"); effort is the top-level `reasoning_effort` (Chat) / `output_config.effort` (Messages), low/high/max, default max. \"Return the complete assistant message unchanged in multi-turn conversations and tool calls.\" Mirrors moonshot-anthropic/kimi-k3 field for field (continuation `none`; efforts low/high/max sent the way that row sends them). The Messages schema lists this id (\"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\", https://platform.kimi.ai/docs/api/messages) with `output_config.effort` enum low/high/max, default max; context caching writes need the TOP-LEVEL `cache_control` (\"cache_control markers inside the messages array are ignored\"). CN prices are CNY converted at the catalog-wide 0.149. Pricing is flat across the 1M window: \"Kimi K3.1 Pro offers a 1M-token context and uses flat pay-as-you-go pricing — there is no tiering by context length\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). The 1h cache-write rate is not representable (one cache-write field: the default 5m TTL is recorded).",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Base https://api.moonshot.cn/anthropic (/v1/messages). https://platform.kimi.com/docs/models lists `kimi-k3.1-pro` as a current model (\"Kimi K3.1 Pro has launched!\"); K3.1 Pro is \"a post-trained version of Kimi K3\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). Access: \"it is unlocked after a successful top-up (minimum $1)\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart; CN: minimum CNY 10, and the CN sign-up voucher does not apply — https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart) — a top-up gate, not an access program. Fixed sampling: \"`temperature=1.0`, `top_p=0.95`, `n=1`, `presence_penalty=0`, and `frequency_penalty=0` are fixed; omit them from requests.\" Thinking is always on (\"You can't — K3.1 Pro always thinks\"); effort is the top-level `reasoning_effort` (Chat) / `output_config.effort` (Messages), low/high/max, default max. \"Return the complete assistant message unchanged in multi-turn conversations and tool calls.\" Mirrors moonshot-anthropic/kimi-k3 field for field (continuation `none`; efforts low/high/max, sent as `output_config.effort` via `reasoning.effortRequest` on both rows). The Messages schema lists this id (\"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\", https://platform.kimi.ai/docs/api/messages) with `output_config.effort` enum low/high/max, default max; context caching writes need the TOP-LEVEL `cache_control` (\"cache_control markers inside the messages array are ignored\"). CN prices are CNY converted at the catalog-wide 0.149. Pricing is flat across the 1M window: \"Kimi K3.1 Pro offers a 1M-token context and uses flat pay-as-you-go pricing — there is no tiering by context length\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). The 1h cache-write rate is not representable (one cache-write field: the default 5m TTL is recorded). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -100973,7 +101054,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.com/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"本接口当前支持 `kimi-k3.1-pro`、`kimi-k3.1-pro-highspeed` 和 `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"推理强度，支持 low、high、max，默认 max。\" The request schema defines no `thinking` field.",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -101101,7 +101191,7 @@
       "upstreamId": "kimi-k3.1-pro-highspeed",
       "displayName": "Kimi K3.1 Pro Highspeed (Anthropic dialect)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Base https://api.moonshot.ai/anthropic (/v1/messages). https://platform.kimi.ai/docs/models lists `kimi-k3.1-pro-highspeed` as a current model (\"Kimi K3.1 Pro has launched!\"); K3.1 Pro is \"a post-trained version of Kimi K3\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). Highspeed is K3.1 Pro's \"high-speed variant ... same intelligence, about 2-3× the speed\" (https://platform.kimi.ai/docs/models); where a page states a fact for K3.1 Pro only, this row carries it as `inferred` and says so. Access: \"it is unlocked after a successful top-up (minimum $1)\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart; CN: minimum CNY 10, and the CN sign-up voucher does not apply — https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart) — a top-up gate, not an access program. Fixed sampling: \"`temperature=1.0`, `top_p=0.95`, `n=1`, `presence_penalty=0`, and `frequency_penalty=0` are fixed; omit them from requests.\" Thinking is always on (\"You can't — K3.1 Pro always thinks\"); effort is the top-level `reasoning_effort` (Chat) / `output_config.effort` (Messages), low/high/max, default max. \"Return the complete assistant message unchanged in multi-turn conversations and tool calls.\" Mirrors moonshot-anthropic/kimi-k3 field for field (continuation `none`; efforts low/high/max sent the way that row sends them). The Messages schema lists this id (\"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\", https://platform.kimi.ai/docs/api/messages) with `output_config.effort` enum low/high/max, default max; context caching writes need the TOP-LEVEL `cache_control` (\"cache_control markers inside the messages array are ignored\"). Pricing is flat across the 1M window: \"Kimi K3.1 Pro offers a 1M-token context and uses flat pay-as-you-go pricing — there is no tiering by context length\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). The 1h cache-write rate is not representable (one cache-write field: the default 5m TTL is recorded).",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Base https://api.moonshot.ai/anthropic (/v1/messages). https://platform.kimi.ai/docs/models lists `kimi-k3.1-pro-highspeed` as a current model (\"Kimi K3.1 Pro has launched!\"); K3.1 Pro is \"a post-trained version of Kimi K3\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). Highspeed is K3.1 Pro's \"high-speed variant ... same intelligence, about 2-3× the speed\" (https://platform.kimi.ai/docs/models); where a page states a fact for K3.1 Pro only, this row carries it as `inferred` and says so. Access: \"it is unlocked after a successful top-up (minimum $1)\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart; CN: minimum CNY 10, and the CN sign-up voucher does not apply — https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart) — a top-up gate, not an access program. Fixed sampling: \"`temperature=1.0`, `top_p=0.95`, `n=1`, `presence_penalty=0`, and `frequency_penalty=0` are fixed; omit them from requests.\" Thinking is always on (\"You can't — K3.1 Pro always thinks\"); effort is the top-level `reasoning_effort` (Chat) / `output_config.effort` (Messages), low/high/max, default max. \"Return the complete assistant message unchanged in multi-turn conversations and tool calls.\" Mirrors moonshot-anthropic/kimi-k3 field for field (continuation `none`; efforts low/high/max, sent as `output_config.effort` via `reasoning.effortRequest` on both rows). The Messages schema lists this id (\"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\", https://platform.kimi.ai/docs/api/messages) with `output_config.effort` enum low/high/max, default max; context caching writes need the TOP-LEVEL `cache_control` (\"cache_control markers inside the messages array are ignored\"). Pricing is flat across the 1M window: \"Kimi K3.1 Pro offers a 1M-token context and uses flat pay-as-you-go pricing — there is no tiering by context length\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). The 1h cache-write rate is not representable (one cache-write field: the default 5m TTL is recorded). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -101181,7 +101271,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.ai/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"Reasoning effort: low, high, or max; default max. Changing the level breaks prefix-cache hits, so decide it before the session starts.\" The request schema defines no `thinking` field (thinking appears only as response content blocks).",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -101309,7 +101408,7 @@
       "upstreamId": "kimi-k3.1-pro-highspeed",
       "displayName": "Kimi K3.1 Pro Highspeed (CN Anthropic dialect)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Base https://api.moonshot.cn/anthropic (/v1/messages). https://platform.kimi.com/docs/models lists `kimi-k3.1-pro-highspeed` as a current model (\"Kimi K3.1 Pro has launched!\"); K3.1 Pro is \"a post-trained version of Kimi K3\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). Highspeed is K3.1 Pro's \"high-speed variant ... same intelligence, about 2-3× the speed\" (https://platform.kimi.ai/docs/models); where a page states a fact for K3.1 Pro only, this row carries it as `inferred` and says so. Access: \"it is unlocked after a successful top-up (minimum $1)\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart; CN: minimum CNY 10, and the CN sign-up voucher does not apply — https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart) — a top-up gate, not an access program. Fixed sampling: \"`temperature=1.0`, `top_p=0.95`, `n=1`, `presence_penalty=0`, and `frequency_penalty=0` are fixed; omit them from requests.\" Thinking is always on (\"You can't — K3.1 Pro always thinks\"); effort is the top-level `reasoning_effort` (Chat) / `output_config.effort` (Messages), low/high/max, default max. \"Return the complete assistant message unchanged in multi-turn conversations and tool calls.\" Mirrors moonshot-anthropic/kimi-k3 field for field (continuation `none`; efforts low/high/max sent the way that row sends them). The Messages schema lists this id (\"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\", https://platform.kimi.ai/docs/api/messages) with `output_config.effort` enum low/high/max, default max; context caching writes need the TOP-LEVEL `cache_control` (\"cache_control markers inside the messages array are ignored\"). CN prices are CNY converted at the catalog-wide 0.149. Pricing is flat across the 1M window: \"Kimi K3.1 Pro offers a 1M-token context and uses flat pay-as-you-go pricing — there is no tiering by context length\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). The 1h cache-write rate is not representable (one cache-write field: the default 5m TTL is recorded).",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Base https://api.moonshot.cn/anthropic (/v1/messages). https://platform.kimi.com/docs/models lists `kimi-k3.1-pro-highspeed` as a current model (\"Kimi K3.1 Pro has launched!\"); K3.1 Pro is \"a post-trained version of Kimi K3\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). Highspeed is K3.1 Pro's \"high-speed variant ... same intelligence, about 2-3× the speed\" (https://platform.kimi.ai/docs/models); where a page states a fact for K3.1 Pro only, this row carries it as `inferred` and says so. Access: \"it is unlocked after a successful top-up (minimum $1)\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart; CN: minimum CNY 10, and the CN sign-up voucher does not apply — https://platform.kimi.com/docs/guide/kimi-k3-1-pro-quickstart) — a top-up gate, not an access program. Fixed sampling: \"`temperature=1.0`, `top_p=0.95`, `n=1`, `presence_penalty=0`, and `frequency_penalty=0` are fixed; omit them from requests.\" Thinking is always on (\"You can't — K3.1 Pro always thinks\"); effort is the top-level `reasoning_effort` (Chat) / `output_config.effort` (Messages), low/high/max, default max. \"Return the complete assistant message unchanged in multi-turn conversations and tool calls.\" Mirrors moonshot-anthropic/kimi-k3 field for field (continuation `none`; efforts low/high/max, sent as `output_config.effort` via `reasoning.effortRequest` on both rows). The Messages schema lists this id (\"This endpoint currently supports `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, and `kimi-k3`\", https://platform.kimi.ai/docs/api/messages) with `output_config.effort` enum low/high/max, default max; context caching writes need the TOP-LEVEL `cache_control` (\"cache_control markers inside the messages array are ignored\"). CN prices are CNY converted at the catalog-wide 0.149. Pricing is flat across the 1M window: \"Kimi K3.1 Pro offers a 1M-token context and uses flat pay-as-you-go pricing — there is no tiering by context length\" (https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart). The 1h cache-write rate is not representable (one cache-write field: the default 5m TTL is recorded). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed.",
       "endpoints": [
         "chat"
       ],
@@ -101389,7 +101488,16 @@
           "max"
         ],
         "defaultEffort": "max",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://platform.kimi.com/docs/api/messages (.md rendering, read 2026-10-29) — MessagesRequest schema: `model` \"本接口当前支持 `kimi-k3.1-pro`、`kimi-k3.1-pro-highspeed` 和 `kimi-k3`\"; `output_config.effort`: enum low / high / max, default max, \"推理强度，支持 low、high、max，默认 max。\" The request schema defines no `thinking` field.",
+          "confidence": "declared",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
       "pricing": {
         "value": {
@@ -101412,7 +101520,7 @@
       "upstreamId": "k3.1-pro",
       "displayName": "Kimi K3.1 Pro (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Subscription membership: NO token pricing. Base https://api.kimi.com/coding (China Kimi Code base, as on the sibling `kimi-coding/k3` row). https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29): \"Kimi Code currently offers six model IDs across K3.1 Pro (including K3.1 Pro Highspeed), K3 ...\"; model ID `k3.1-pro` — \"Kimi's latest flagship model: 3T-class parameters, a 1M context window, and thinking mode only\"; availability \"Plus and above\" with \"1M context for Pro and above\" (legacy plans: Moderato and above, 1M for Allegretto and above). \"K3.1 Pro models only support thinking mode. Requests with thinking disabled are rejected.\" \"A mistyped model ID falls back to K2.8 Preview without thinking.\" Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys. Context is plan-dependent (up to 1048576 for higher-tier members). Mirrors `kimi-coding/k3` field for field (native tool use inferred from the official CLI model capabilities, not a direct API probe).",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Subscription membership: NO token pricing. Base https://api.kimi.com/coding (China Kimi Code base, as on the sibling `kimi-coding/k3` row). https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29): \"Kimi Code currently offers six model IDs across K3.1 Pro (including K3.1 Pro Highspeed), K3 ...\"; model ID `k3.1-pro` — \"Kimi's latest flagship model: 3T-class parameters, a 1M context window, and thinking mode only\"; availability \"Plus and above\" with \"1M context for Pro and above\" (legacy plans: Moderato and above, 1M for Allegretto and above). \"K3.1 Pro models only support thinking mode. Requests with thinking disabled are rejected.\" \"A mistyped model ID falls back to K2.8 Preview without thinking.\" Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys. Context is plan-dependent (up to 1048576 for higher-tier members). Mirrors `kimi-coding/k3` field for field (native tool use inferred from the official CLI model capabilities, not a direct API probe). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed. — 2026-10-29 review fix: `unsupportedParameters` lists `thinking.type.disabled` — https://www.kimi.com/code/docs/en/kimi-code/models.html: \"K3.1 Pro models: requests with thinking disabled are rejected (HTTP 400)\", so the Anthropic adapter OMITS the `thinking` field on a disabled-thinking request (the K3 / K2.8 rows are NOT marked: there a disabled request is served by K2.8 Preview without thinking, not rejected).",
       "endpoints": [
         "chat"
       ],
@@ -101485,9 +101593,20 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate"
     },
     {
@@ -101580,7 +101699,7 @@
       "upstreamId": "k3.1-pro",
       "displayName": "Kimi K3.1 Pro (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Subscription membership: NO token pricing. Base https://api.kimi.ai/coding (overseas Kimi Code base, as on the sibling `kimi-coding-intl/k3` row). https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29): \"Kimi Code currently offers six model IDs across K3.1 Pro (including K3.1 Pro Highspeed), K3 ...\"; model ID `k3.1-pro` — \"Kimi's latest flagship model: 3T-class parameters, a 1M context window, and thinking mode only\"; availability \"Plus and above\" with \"1M context for Pro and above\" (legacy plans: Moderato and above, 1M for Allegretto and above). \"K3.1 Pro models only support thinking mode. Requests with thinking disabled are rejected.\" \"A mistyped model ID falls back to K2.8 Preview without thinking.\" Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys. Context is plan-dependent (up to 1048576 for higher-tier members). Mirrors `kimi-coding-intl/k3` field for field (native tool use inferred from the official CLI model capabilities, not a direct API probe).",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Subscription membership: NO token pricing. Base https://api.kimi.ai/coding (overseas Kimi Code base, as on the sibling `kimi-coding-intl/k3` row). https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29): \"Kimi Code currently offers six model IDs across K3.1 Pro (including K3.1 Pro Highspeed), K3 ...\"; model ID `k3.1-pro` — \"Kimi's latest flagship model: 3T-class parameters, a 1M context window, and thinking mode only\"; availability \"Plus and above\" with \"1M context for Pro and above\" (legacy plans: Moderato and above, 1M for Allegretto and above). \"K3.1 Pro models only support thinking mode. Requests with thinking disabled are rejected.\" \"A mistyped model ID falls back to K2.8 Preview without thinking.\" Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys. Context is plan-dependent (up to 1048576 for higher-tier members). Mirrors `kimi-coding-intl/k3` field for field (native tool use inferred from the official CLI model capabilities, not a direct API probe). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed. — 2026-10-29 review fix: `unsupportedParameters` lists `thinking.type.disabled` — https://www.kimi.com/code/docs/en/kimi-code/models.html: \"K3.1 Pro models: requests with thinking disabled are rejected (HTTP 400)\", so the Anthropic adapter OMITS the `thinking` field on a disabled-thinking request (the K3 / K2.8 rows are NOT marked: there a disabled request is served by K2.8 Preview without thinking, not rejected).",
       "endpoints": [
         "chat"
       ],
@@ -101653,9 +101772,20 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate"
     },
     {
@@ -101748,7 +101878,7 @@
       "upstreamId": "k3.1-pro-highspeed",
       "displayName": "Kimi K3.1 Pro Highspeed (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Subscription membership: NO token pricing. Base https://api.kimi.com/coding (China Kimi Code base, as on the sibling `kimi-coding/k3` row). https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29): \"Kimi Code currently offers six model IDs across K3.1 Pro (including K3.1 Pro Highspeed), K3 ...\"; model ID `k3.1-pro-highspeed` — \"The high-speed version of K3.1 Pro, with the same capabilities, faster output, and about twice the quota usage of the regular version\"; availability \"Pro and above\" (legacy plans \"Allegretto and above\"). \"K3.1 Pro models only support thinking mode. Requests with thinking disabled are rejected.\" \"A mistyped model ID falls back to K2.8 Preview without thinking.\" Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys. Context is plan-dependent (up to 1048576 for higher-tier members). Mirrors `kimi-coding/k3` field for field (native tool use inferred from the official CLI model capabilities, not a direct API probe).",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Subscription membership: NO token pricing. Base https://api.kimi.com/coding (China Kimi Code base, as on the sibling `kimi-coding/k3` row). https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29): \"Kimi Code currently offers six model IDs across K3.1 Pro (including K3.1 Pro Highspeed), K3 ...\"; model ID `k3.1-pro-highspeed` — \"The high-speed version of K3.1 Pro, with the same capabilities, faster output, and about twice the quota usage of the regular version\"; availability \"Pro and above\" (legacy plans \"Allegretto and above\"). \"K3.1 Pro models only support thinking mode. Requests with thinking disabled are rejected.\" \"A mistyped model ID falls back to K2.8 Preview without thinking.\" Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys. Context is plan-dependent (up to 1048576 for higher-tier members). Mirrors `kimi-coding/k3` field for field (native tool use inferred from the official CLI model capabilities, not a direct API probe). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed. — 2026-10-29 review fix: `unsupportedParameters` lists `thinking.type.disabled` — https://www.kimi.com/code/docs/en/kimi-code/models.html: \"K3.1 Pro models: requests with thinking disabled are rejected (HTTP 400)\", so the Anthropic adapter OMITS the `thinking` field on a disabled-thinking request (the K3 / K2.8 rows are NOT marked: there a disabled request is served by K2.8 Preview without thinking, not rejected).",
       "endpoints": [
         "chat"
       ],
@@ -101821,9 +101951,20 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate"
     },
     {
@@ -101916,7 +102057,7 @@
       "upstreamId": "k3.1-pro-highspeed",
       "displayName": "Kimi K3.1 Pro Highspeed (Coding Plan Anthropic)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Subscription membership: NO token pricing. Base https://api.kimi.ai/coding (overseas Kimi Code base, as on the sibling `kimi-coding-intl/k3` row). https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29): \"Kimi Code currently offers six model IDs across K3.1 Pro (including K3.1 Pro Highspeed), K3 ...\"; model ID `k3.1-pro-highspeed` — \"The high-speed version of K3.1 Pro, with the same capabilities, faster output, and about twice the quota usage of the regular version\"; availability \"Pro and above\" (legacy plans \"Allegretto and above\"). \"K3.1 Pro models only support thinking mode. Requests with thinking disabled are rejected.\" \"A mistyped model ID falls back to K2.8 Preview without thinking.\" Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys. Context is plan-dependent (up to 1048576 for higher-tier members). Mirrors `kimi-coding-intl/k3` field for field (native tool use inferred from the official CLI model capabilities, not a direct API probe).",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add Kimi K3.1 Pro). Subscription membership: NO token pricing. Base https://api.kimi.ai/coding (overseas Kimi Code base, as on the sibling `kimi-coding-intl/k3` row). https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29): \"Kimi Code currently offers six model IDs across K3.1 Pro (including K3.1 Pro Highspeed), K3 ...\"; model ID `k3.1-pro-highspeed` — \"The high-speed version of K3.1 Pro, with the same capabilities, faster output, and about twice the quota usage of the regular version\"; availability \"Pro and above\" (legacy plans \"Allegretto and above\"). \"K3.1 Pro models only support thinking mode. Requests with thinking disabled are rejected.\" \"A mistyped model ID falls back to K2.8 Preview without thinking.\" Keys are issued by Kimi Code Console, distinct from Kimi Open Platform keys. Context is plan-dependent (up to 1048576 for higher-tier members). Mirrors `kimi-coding-intl/k3` field for field (native tool use inferred from the official CLI model capabilities, not a direct API probe). — 2026-10-29 review fix: `reasoning.effortRequest` = `output_config.effort`, so the Anthropic adapter sends the effort tier as `output_config.effort` instead of a `thinking` budget (Kimi's Messages request schema has NO `thinking` field — it defines only `output_config.effort`, enum low/high/max, default max). KNOWN GAP, adapter deliberately unchanged: on an effortRequest row the adapter still sends `thinking: {\"type\": \"adaptive\"}` alongside the tier (mapAnthropicEffort's effortRequest branch), which is outside Kimi's documented request schema; whether Kimi ignores or rejects it is unprobed. — 2026-10-29 review fix: `unsupportedParameters` lists `thinking.type.disabled` — https://www.kimi.com/code/docs/en/kimi-code/models.html: \"K3.1 Pro models: requests with thinking disabled are rejected (HTTP 400)\", so the Anthropic adapter OMITS the `thinking` field on a disabled-thinking request (the K3 / K2.8 rows are NOT marked: there a disabled request is served by K2.8 Preview without thinking, not rejected).",
       "endpoints": [
         "chat"
       ],
@@ -101989,9 +102130,20 @@
           "max"
         ],
         "defaultEffort": "high",
-        "continuation": "none"
+        "continuation": "none",
+        "effortRequest": {
+          "value": {
+            "field": "output_config.effort"
+          },
+          "source": "official-doc",
+          "sourceRef": "https://www.kimi.com/code/docs/en/kimi-code/models.html (read 2026-10-29) — \"K3.1 Pro models, the K3 series, and K2.8 Preview support low / high / max thinking effort levels\" and recommends \"the Kimi Coding Plan's native Responses, chat completion, or message APIs\", but does NOT name the Messages wire field; `output_config.effort` is carried over from the Kimi open platform's Messages schema (https://platform.kimi.ai/docs/api/messages: `output_config.effort` low/high/max, no `thinking` request field) — INFERRED for the Kimi Code endpoint, unprobed.",
+          "confidence": "inferred",
+          "observedAt": "2026-10-29T18:00:00Z"
+        }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate"
     },
     {
@@ -102183,7 +102335,7 @@
       "upstreamId": "MiniMax-M3.1-Flash",
       "displayName": "MiniMax-M3.1-Flash (Anthropic dialect)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add MiniMax M3.1 Flash). Anthropic Messages base https://api.minimax.io/anthropic (https://platform.minimax.io/docs/api-reference/text-anthropic-api, read 2026-10-29). https://platform.minimax.io/docs/guides/models-intro lists `MiniMax-M3.1-Flash` first among Language models (\"Frontier multimodal coding model with 1M context window and tunable thinking depth\"); the M Plan page notes \"MiniMax-M3.1-Flash-Preview has been retired. Requests using the old name are now served by MiniMax-M3.1-Flash.\" Thinking is always on (`{\"type\":\"disabled\"}` returns 400). Effort is `output_config.effort` low/medium/high/xhigh/max, default max (\"Tunes thinking depth for `MiniMax-M3.1-Flash`\"), alongside `thinking: {\"type\": \"adaptive\"}` — so this row declares `reasoning.effortRequest` and the Anthropic adapter sends the tier there (with adaptive thinking) instead of a thinking budget, unlike minimax-anthropic/MiniMax-M3, which documents no graded effort. Thinking blocks are returned and must be replayed unchanged; continuation `none`, as on the M3 Anthropic-dialect rows. top_k, stop_sequences, mcp_servers, context_management and container are ignored; `service_tier` is not supported for this model. Pay-as-you-go price: https://platform.minimax.io/docs/guides/pricing-paygo lists `MiniMax-M3.1-Flash` with a single flat rate (no >512K tier, unlike M3, and no priority tier: `service_tier` is unsupported for it). No structured-output (json_schema) statement for this model, so `structuredOutput` is absent.",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add MiniMax M3.1 Flash). Anthropic Messages base https://api.minimax.io/anthropic (https://platform.minimax.io/docs/api-reference/text-anthropic-api, read 2026-10-29). https://platform.minimax.io/docs/guides/models-intro lists `MiniMax-M3.1-Flash` first among Language models (\"Frontier multimodal coding model with 1M context window and tunable thinking depth\"); the M Plan page notes \"MiniMax-M3.1-Flash-Preview has been retired. Requests using the old name are now served by MiniMax-M3.1-Flash.\" Thinking is always on (`{\"type\":\"disabled\"}` returns 400). Effort is `output_config.effort` low/medium/high/xhigh/max, default max (\"Tunes thinking depth for `MiniMax-M3.1-Flash`\"), alongside `thinking: {\"type\": \"adaptive\"}` — so this row declares `reasoning.effortRequest` and the Anthropic adapter sends the tier there (with adaptive thinking) instead of a thinking budget, unlike minimax-anthropic/MiniMax-M3, which documents no graded effort. Thinking blocks are returned and must be replayed unchanged; continuation `none`, as on the M3 Anthropic-dialect rows. top_k, stop_sequences, mcp_servers, context_management and container are ignored; `service_tier` is not supported for this model. Pay-as-you-go price: https://platform.minimax.io/docs/guides/pricing-paygo lists `MiniMax-M3.1-Flash` with a single flat rate (no >512K tier, unlike M3, and no priority tier: `service_tier` is unsupported for it). No structured-output (json_schema) statement for this model, so `structuredOutput` is absent. — 2026-10-29 review fix: `unsupportedParameters` lists `thinking.type.disabled` — the page: \"`MiniMax-M3.1-Flash` always thinks and returns `400` if `disabled` is sent\" (error 2013 \"requires adaptive thinking\"), so the Anthropic adapter OMITS the `thinking` field on a disabled-thinking request rather than sending a value it will reject.",
       "endpoints": [
         "chat"
       ],
@@ -102280,7 +102432,9 @@
         "confidence": "declared",
         "observedAt": "2026-10-29T12:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate"
     },
     {
@@ -102388,7 +102542,7 @@
       "upstreamId": "MiniMax-M3.1-Flash",
       "displayName": "MiniMax-M3.1-Flash (CN) (Anthropic dialect)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add MiniMax M3.1 Flash). Anthropic Messages base https://api.minimax.cn/anthropic (https://platform.minimax.cn/docs/api-reference/text-anthropic-api, read 2026-10-29). https://platform.minimax.cn/docs/guides/models-intro lists `MiniMax-M3.1-Flash` first among Language models (\"Frontier multimodal coding model with 1M context window and tunable thinking depth\"); the M Plan page notes \"MiniMax-M3.1-Flash-Preview has been retired. Requests using the old name are now served by MiniMax-M3.1-Flash.\" Thinking is always on (`{\"type\":\"disabled\"}` returns 400). Effort is `output_config.effort` low/medium/high/xhigh/max, default max (\"Tunes thinking depth for `MiniMax-M3.1-Flash`\"), alongside `thinking: {\"type\": \"adaptive\"}` — so this row declares `reasoning.effortRequest` and the Anthropic adapter sends the tier there (with adaptive thinking) instead of a thinking budget, unlike minimax-anthropic/MiniMax-M3, which documents no graded effort. Thinking blocks are returned and must be replayed unchanged; continuation `none`, as on the M3 Anthropic-dialect rows. top_k, stop_sequences, mcp_servers, context_management and container are ignored; `service_tier` is not supported for this model. Pay-as-you-go price: https://platform.minimax.cn/docs/guides/pricing-paygo lists `MiniMax-M3.1-Flash` with a single flat rate (no >512K tier, unlike M3, and no priority tier: `service_tier` is unsupported for it). CN price in CNY converted at the catalog-wide 0.149. No structured-output (json_schema) statement for this model, so `structuredOutput` is absent.",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add MiniMax M3.1 Flash). Anthropic Messages base https://api.minimax.cn/anthropic (https://platform.minimax.cn/docs/api-reference/text-anthropic-api, read 2026-10-29). https://platform.minimax.cn/docs/guides/models-intro lists `MiniMax-M3.1-Flash` first among Language models (\"Frontier multimodal coding model with 1M context window and tunable thinking depth\"); the M Plan page notes \"MiniMax-M3.1-Flash-Preview has been retired. Requests using the old name are now served by MiniMax-M3.1-Flash.\" Thinking is always on (`{\"type\":\"disabled\"}` returns 400). Effort is `output_config.effort` low/medium/high/xhigh/max, default max (\"Tunes thinking depth for `MiniMax-M3.1-Flash`\"), alongside `thinking: {\"type\": \"adaptive\"}` — so this row declares `reasoning.effortRequest` and the Anthropic adapter sends the tier there (with adaptive thinking) instead of a thinking budget, unlike minimax-anthropic/MiniMax-M3, which documents no graded effort. Thinking blocks are returned and must be replayed unchanged; continuation `none`, as on the M3 Anthropic-dialect rows. top_k, stop_sequences, mcp_servers, context_management and container are ignored; `service_tier` is not supported for this model. Pay-as-you-go price: https://platform.minimax.cn/docs/guides/pricing-paygo lists `MiniMax-M3.1-Flash` with a single flat rate (no >512K tier, unlike M3, and no priority tier: `service_tier` is unsupported for it). CN price in CNY converted at the catalog-wide 0.149. No structured-output (json_schema) statement for this model, so `structuredOutput` is absent. — 2026-10-29 review fix: `unsupportedParameters` lists `thinking.type.disabled` — the page: \"`MiniMax-M3.1-Flash` always thinks and returns `400` if `disabled` is sent\" (error 2013 \"requires adaptive thinking\"), so the Anthropic adapter OMITS the `thinking` field on a disabled-thinking request rather than sending a value it will reject.",
       "endpoints": [
         "chat"
       ],
@@ -102485,7 +102639,9 @@
         "confidence": "declared",
         "observedAt": "2026-10-29T12:00:00Z"
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate"
     },
     {
@@ -102582,7 +102738,7 @@
       "upstreamId": "MiniMax-M3.1-Flash",
       "displayName": "MiniMax-M3.1-Flash (M Plan) (Anthropic dialect)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add MiniMax M3.1 Flash). Anthropic Messages base https://api.minimax.io/anthropic (https://platform.minimax.io/docs/api-reference/text-anthropic-api, read 2026-10-29). https://platform.minimax.io/docs/guides/models-intro lists `MiniMax-M3.1-Flash` first among Language models (\"Frontier multimodal coding model with 1M context window and tunable thinking depth\"); the M Plan page notes \"MiniMax-M3.1-Flash-Preview has been retired. Requests using the old name are now served by MiniMax-M3.1-Flash.\" Thinking is always on (`{\"type\":\"disabled\"}` returns 400). Effort is `output_config.effort` low/medium/high/xhigh/max, default max (\"Tunes thinking depth for `MiniMax-M3.1-Flash`\"), alongside `thinking: {\"type\": \"adaptive\"}` — so this row declares `reasoning.effortRequest` and the Anthropic adapter sends the tier there (with adaptive thinking) instead of a thinking budget, unlike minimax-anthropic/MiniMax-M3, which documents no graded effort. Thinking blocks are returned and must be replayed unchanged; continuation `none`, as on the M3 Anthropic-dialect rows. top_k, stop_sequences, mcp_servers, context_management and container are ignored; `service_tier` is not supported for this model. Subscription (M Plan) key, NO per-token pricing: https://platform.minimax.io/docs/token-plan/intro lists \"Text model: M3.1 Flash\" on every tier (Go / Explore / Build) and https://platform.minimax.io/docs/m-plan/other-tools gives Base URL `https://api.minimax.io/anthropic` with Model ID `MiniMax-M3.1-Flash`. The M Plan page lists ONLY M3.1 Flash as its text model now; the sibling M3 / M2.7 rows on this provider were left untouched (no retirement date is published). No structured-output (json_schema) statement for this model, so `structuredOutput` is absent.",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add MiniMax M3.1 Flash). Anthropic Messages base https://api.minimax.io/anthropic (https://platform.minimax.io/docs/api-reference/text-anthropic-api, read 2026-10-29). https://platform.minimax.io/docs/guides/models-intro lists `MiniMax-M3.1-Flash` first among Language models (\"Frontier multimodal coding model with 1M context window and tunable thinking depth\"); the M Plan page notes \"MiniMax-M3.1-Flash-Preview has been retired. Requests using the old name are now served by MiniMax-M3.1-Flash.\" Thinking is always on (`{\"type\":\"disabled\"}` returns 400). Effort is `output_config.effort` low/medium/high/xhigh/max, default max (\"Tunes thinking depth for `MiniMax-M3.1-Flash`\"), alongside `thinking: {\"type\": \"adaptive\"}` — so this row declares `reasoning.effortRequest` and the Anthropic adapter sends the tier there (with adaptive thinking) instead of a thinking budget, unlike minimax-anthropic/MiniMax-M3, which documents no graded effort. Thinking blocks are returned and must be replayed unchanged; continuation `none`, as on the M3 Anthropic-dialect rows. top_k, stop_sequences, mcp_servers, context_management and container are ignored; `service_tier` is not supported for this model. Subscription (M Plan) key, NO per-token pricing: https://platform.minimax.io/docs/token-plan/intro lists \"Text model: M3.1 Flash\" on every tier (Go / Explore / Build) and https://platform.minimax.io/docs/m-plan/other-tools gives Base URL `https://api.minimax.io/anthropic` with Model ID `MiniMax-M3.1-Flash`. The M Plan page lists ONLY M3.1 Flash as its text model now; the sibling M3 / M2.7 rows on this provider were left untouched (no retirement date is published). No structured-output (json_schema) statement for this model, so `structuredOutput` is absent. — 2026-10-29 review fix: `unsupportedParameters` lists `thinking.type.disabled` — the page: \"`MiniMax-M3.1-Flash` always thinks and returns `400` if `disabled` is sent\" (error 2013 \"requires adaptive thinking\"), so the Anthropic adapter OMITS the `thinking` field on a disabled-thinking request rather than sending a value it will reject.",
       "endpoints": [
         "chat"
       ],
@@ -102668,7 +102824,9 @@
           "observedAt": "2026-10-29T12:00:00Z"
         }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate"
     },
     {
@@ -102765,7 +102923,7 @@
       "upstreamId": "MiniMax-M3.1-Flash",
       "displayName": "MiniMax-M3.1-Flash (M Plan) (CN) (Anthropic dialect)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add MiniMax M3.1 Flash). Anthropic Messages base https://api.minimax.cn/anthropic (https://platform.minimax.cn/docs/api-reference/text-anthropic-api, read 2026-10-29). https://platform.minimax.cn/docs/guides/models-intro lists `MiniMax-M3.1-Flash` first among Language models (\"Frontier multimodal coding model with 1M context window and tunable thinking depth\"); the M Plan page notes \"MiniMax-M3.1-Flash-Preview has been retired. Requests using the old name are now served by MiniMax-M3.1-Flash.\" Thinking is always on (`{\"type\":\"disabled\"}` returns 400). Effort is `output_config.effort` low/medium/high/xhigh/max, default max (\"Tunes thinking depth for `MiniMax-M3.1-Flash`\"), alongside `thinking: {\"type\": \"adaptive\"}` — so this row declares `reasoning.effortRequest` and the Anthropic adapter sends the tier there (with adaptive thinking) instead of a thinking budget, unlike minimax-anthropic/MiniMax-M3, which documents no graded effort. Thinking blocks are returned and must be replayed unchanged; continuation `none`, as on the M3 Anthropic-dialect rows. top_k, stop_sequences, mcp_servers, context_management and container are ignored; `service_tier` is not supported for this model. Subscription (M Plan) key, NO per-token pricing: https://platform.minimax.cn/docs/token-plan/intro lists \"Text model: M3.1 Flash\" on every tier (Go / Explore / Build) and https://platform.minimax.cn/docs/m-plan/other-tools gives Base URL `https://api.minimax.cn/anthropic` with Model ID `MiniMax-M3.1-Flash`. The M Plan page lists ONLY M3.1 Flash as its text model now; the sibling M3 / M2.7 rows on this provider were left untouched (no retirement date is published). No structured-output (json_schema) statement for this model, so `structuredOutput` is absent.",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: user ask to add MiniMax M3.1 Flash). Anthropic Messages base https://api.minimax.cn/anthropic (https://platform.minimax.cn/docs/api-reference/text-anthropic-api, read 2026-10-29). https://platform.minimax.cn/docs/guides/models-intro lists `MiniMax-M3.1-Flash` first among Language models (\"Frontier multimodal coding model with 1M context window and tunable thinking depth\"); the M Plan page notes \"MiniMax-M3.1-Flash-Preview has been retired. Requests using the old name are now served by MiniMax-M3.1-Flash.\" Thinking is always on (`{\"type\":\"disabled\"}` returns 400). Effort is `output_config.effort` low/medium/high/xhigh/max, default max (\"Tunes thinking depth for `MiniMax-M3.1-Flash`\"), alongside `thinking: {\"type\": \"adaptive\"}` — so this row declares `reasoning.effortRequest` and the Anthropic adapter sends the tier there (with adaptive thinking) instead of a thinking budget, unlike minimax-anthropic/MiniMax-M3, which documents no graded effort. Thinking blocks are returned and must be replayed unchanged; continuation `none`, as on the M3 Anthropic-dialect rows. top_k, stop_sequences, mcp_servers, context_management and container are ignored; `service_tier` is not supported for this model. Subscription (M Plan) key, NO per-token pricing: https://platform.minimax.cn/docs/token-plan/intro lists \"Text model: M3.1 Flash\" on every tier (Go / Explore / Build) and https://platform.minimax.cn/docs/m-plan/other-tools gives Base URL `https://api.minimax.cn/anthropic` with Model ID `MiniMax-M3.1-Flash`. The M Plan page lists ONLY M3.1 Flash as its text model now; the sibling M3 / M2.7 rows on this provider were left untouched (no retirement date is published). No structured-output (json_schema) statement for this model, so `structuredOutput` is absent. — 2026-10-29 review fix: `unsupportedParameters` lists `thinking.type.disabled` — the page: \"`MiniMax-M3.1-Flash` always thinks and returns `400` if `disabled` is sent\" (error 2013 \"requires adaptive thinking\"), so the Anthropic adapter OMITS the `thinking` field on a disabled-thinking request rather than sending a value it will reject.",
       "endpoints": [
         "chat"
       ],
@@ -102851,7 +103009,9 @@
           "observedAt": "2026-10-29T12:00:00Z"
         }
       },
-      "unsupportedParameters": [],
+      "unsupportedParameters": [
+        "thinking.type.disabled"
+      ],
       "status": "candidate"
     },
     {
@@ -102860,7 +103020,7 @@
       "upstreamId": "gemini-4-argon",
       "displayName": "Gemini 4 Argon",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29 (catalog refresh: Gemini 4 Argon, found via OpenRouter's list, every fact from Google's own pages read 2026-10-29). https://ai.google.dev/gemini-api/docs/models/gemini-4-argon: \"Gemini 4 Argon (`gemini-4-argon`) is our flagship reasoning model\"; Versions \"Stable: `gemini-4-argon`\", Latest update \"October 2026\" — GA (Vertex: \"Launch stage: GA Release date: October 13, 2026\", https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon). maxOutputTokens is the SYNCHRONOUS cap: \"Max output 65,536 (default synchronous) / up to 1,048,576 (with long decode)\"; https://ai.google.dev/gemini-api/docs/thinking: \"Setting `max_output_tokens > 65536` with `background=False` returns a `400` error\" — long decode needs `background=True`, which this adapter does not send. Context is unified: \"Input, thinking, and output tokens share a single 1M-token context window (`1,048,576` tokens)\". Thinking is on by default at medium and tunable low/medium/high via thinking_level (https://ai.google.dev/gemini-api/docs/thinking table: \"gemini-4-argon | On (medium) | low, medium, high\"); no thinkingBudget for this model. https://ai.google.dev/gemini-api/docs/latest-model: sampling parameters are ignored (\"Remove `temperature`, `top_p`, and `top_k` from your requests. If provided, they are ignored.\"). Thought signatures must be resent unchanged in stateless mode (\"You **MUST** always resend all `thought` blocks exactly as they were received\"). Explicit caching is NOT supported (implicit only). Mirrors google/gemini-3.8-flash's field set; the time-tiered price is disclosed on the pricing field. `candidate_count` stays unsupported as on every Gemini 3+ row.",
+      "$comment": "Winter-authored 2026-10-29 (catalog refresh: Gemini 4 Argon, found via OpenRouter's list, every fact from Google's own pages read 2026-10-29). https://ai.google.dev/gemini-api/docs/models/gemini-4-argon: \"Gemini 4 Argon (`gemini-4-argon`) is our flagship reasoning model\"; Versions \"Stable: `gemini-4-argon`\", Latest update \"October 2026\" — GA (Vertex: \"Launch stage: GA Release date: October 13, 2026\", https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon). maxOutputTokens is the SYNCHRONOUS cap: \"Max output 65,536 (default synchronous) / up to 1,048,576 (with long decode)\"; https://ai.google.dev/gemini-api/docs/thinking: \"Setting `max_output_tokens > 65536` with `background=False` returns a `400` error\" — long decode needs `background=True`, which this adapter does not send. Context is unified: \"Input, thinking, and output tokens share a single 1M-token context window (`1,048,576` tokens)\". Thinking is on by default at medium and tunable low/medium/high via thinking_level (https://ai.google.dev/gemini-api/docs/thinking table: \"gemini-4-argon | On (medium) | low, medium, high\"); no thinkingBudget for this model. https://ai.google.dev/gemini-api/docs/latest-model: sampling parameters are ignored (\"Remove `temperature`, `top_p`, and `top_k` from your requests. If provided, they are ignored.\"). Thought signatures must be resent unchanged in stateless mode (\"You **MUST** always resend all `thought` blocks exactly as they were received\"). Explicit caching is NOT supported (implicit only). Mirrors google/gemini-3.8-flash's field set; the time-tiered price is disclosed on the pricing field. `candidate_count` stays unsupported as on every Gemini 3+ row. Price note: the recorded $2.00 input / $10.00 output / $0.10 context-caching rate runs THROUGH 2026-11-30; from 2026-12-01 Google's Standard paid tier is $4.00 / $20.00 / $0.20 per 1M tokens (https://ai.google.dev/gemini-api/docs/pricing#gemini-4-argon, read 2026-10-29) — re-price this row then.",
       "endpoints": [
         "chat"
       ],
@@ -102992,7 +103152,7 @@
       "upstreamId": "gemini-4-argon",
       "displayName": "Gemini 4 Argon (OpenAI compatible)",
       "aliases": [],
-      "$comment": "Winter-authored 2026-10-29. OpenAI-compatible Chat Completions at https://generativelanguage.googleapis.com/v1beta/openai (https://ai.google.dev/gemini-api/docs/openai). Unlike the 3.8 Flash row, the compatibility page now gives this model its OWN reasoning_effort mapping column: \"| `reasoning_effort` (OpenAI) | `thinking_level` (Gemini 4 Argon) |\" — minimal->low, low->low, medium->medium, high->high; \"If no `reasoning_effort` is specified, Gemini uses the model's default\" (medium). `minimal` is a documented alias of `low` here, so `efforts` lists the three distinct levels (as the native row does) rather than an alias that maps onto one of them; `none` is not offered (\"Reasoning cannot be turned off for Gemini 2.5 Pro or 3 models\" and the table has no `none` row for Argon). Synchronous output cap 65,536 (https://ai.google.dev/gemini-api/docs/thinking). Every other fact is google/gemini-4-argon's (same model, same key, same billing); price time-tiered exactly as there.",
+      "$comment": "Winter-authored 2026-10-29. OpenAI-compatible Chat Completions at https://generativelanguage.googleapis.com/v1beta/openai (https://ai.google.dev/gemini-api/docs/openai). Unlike the 3.8 Flash row, the compatibility page now gives this model its OWN reasoning_effort mapping column: \"| `reasoning_effort` (OpenAI) | `thinking_level` (Gemini 4 Argon) |\" — minimal->low, low->low, medium->medium, high->high; \"If no `reasoning_effort` is specified, Gemini uses the model's default\" (medium). `minimal` is a documented alias of `low` here, so `efforts` lists the three distinct levels (as the native row does) rather than an alias that maps onto one of them; `none` is not offered (\"Reasoning cannot be turned off for Gemini 2.5 Pro or 3 models\" and the table has no `none` row for Argon). Synchronous output cap 65,536 (https://ai.google.dev/gemini-api/docs/thinking). Every other fact is google/gemini-4-argon's (same model, same key, same billing); price time-tiered exactly as there. Price note: the recorded $2.00 input / $10.00 output / $0.10 context-caching rate runs THROUGH 2026-11-30; from 2026-12-01 Google's Standard paid tier is $4.00 / $20.00 / $0.20 per 1M tokens (https://ai.google.dev/gemini-api/docs/pricing#gemini-4-argon, read 2026-10-29) — re-price this row then.",
       "endpoints": [
         "chat"
       ],
