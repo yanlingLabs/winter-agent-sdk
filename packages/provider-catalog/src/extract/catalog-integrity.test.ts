@@ -2282,18 +2282,10 @@ describe("2026-10-29 continuation audit: each provider family's documented repla
     }
   };
 
-  // Rows left at their 0.0.61 `plaintext` because no document covers their host or model (review of the
-  // audit): the adapter replays nothing for them, and they are on the live-call list.
-  const LEFT_AT_0061 = new Set(["tencent-token-plan/hy3", "tencent-token-plan/hy4-preview", "tencent-token-plan/kimi-k2.7-code", "tencent-token-plan/kimi-k3", "tencent-tokenhub/hy4-preview", "tencent-tokenhub-intl/hy4-preview"]);
-
-  test("a Chat Completions row is `plaintext` exactly when it is `full-exposed` -- the adapter replays `reasoning_content` only for such a row -- except the rows left at 0.0.61", () => {
+  test("a Chat Completions row is `plaintext` exactly when it is `full-exposed` -- the adapter replays `reasoning_content` only for such a row, so `plaintext` without it claimed state nothing kept", () => {
     for (const m of catalog.models) {
       if (adapterOf.get(m.providerId) !== "winter.openai-chat-completions" || m.reasoning === undefined) continue;
       const exposed = m.reasoning.readableState?.value === "full-exposed";
-      if (LEFT_AT_0061.has(m.key)) {
-        expect([m.key, m.reasoning.continuation, exposed, m.reasoning.continuationDomain]).toEqual([m.key, "plaintext", false, undefined]);
-        continue;
-      }
       expect([m.key, m.reasoning.continuation === "plaintext"]).toEqual([m.key, exposed]);
     }
   });
@@ -2392,14 +2384,14 @@ describe("2026-10-29 continuation audit: each provider family's documented repla
     for (const p of ["alibaba-anthropic", "alibaba-cn-anthropic", "qwen-coding-anthropic", "qwen-coding-cn-anthropic", "qwen-token-plan-anthropic"]) expectAll(reasoning(p), "none", 10);
   });
 
-  test("Tencent: TokenHub's hy3 replays reasoning_content; nothing is claimed for hy4-preview or for the LKEAP plan hosts beyond 0.0.61", () => {
+  test("Tencent: TokenHub's hy3 replays reasoning_content; nothing is claimed for hy4-preview or on the LKEAP plan hosts", () => {
     for (const p of ["tencent-tokenhub", "tencent-tokenhub-intl"]) {
       expectAll(reasoning(p, (m) => m.upstreamId === "hy3"), "plaintext", 1);
       for (const m of reasoning(p, (r) => r.upstreamId === "hy3")) expect([m.key, m.reasoning!.readableState?.value, JSON.stringify(m.reasoning).includes("hy4-preview")]).toEqual([m.key, "full-exposed", false]);
     }
-    // Left at 0.0.61 (no page covers them): no readable state, so nothing is replayed.
-    for (const m of [...reasoning("tencent-tokenhub", (r) => r.upstreamId === "hy4-preview"), ...reasoning("tencent-token-plan", (r) => /^(hy|kimi-)/.test(r.upstreamId))]) {
-      expect([m.key, m.reasoning!.continuation, m.reasoning!.readableState]).toEqual([m.key, "plaintext", undefined]);
+    // No page covers them: `none`, so the label claims no state the adapter does not replay.
+    for (const m of [...reasoning("tencent-tokenhub", (r) => r.upstreamId === "hy4-preview"), ...reasoning("tencent-tokenhub-intl", (r) => r.upstreamId === "hy4-preview"), ...reasoning("tencent-token-plan", (r) => /^(hy|kimi-)/.test(r.upstreamId))]) {
+      expect([m.key, m.reasoning!.continuation, m.reasoning!.readableState]).toEqual([m.key, "none", undefined]);
     }
     expectAll(reasoning("tencent-token-plan", (m) => /^(deepseek|glm|minimax)-/.test(m.upstreamId)), "none", 9);
     expectAll(reasoning("tencent-coding"), "none", 1);

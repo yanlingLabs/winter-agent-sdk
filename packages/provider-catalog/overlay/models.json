@@ -46415,7 +46415,7 @@
       "upstreamId": "hy4-preview",
       "displayName": "Hy4 Preview",
       "aliases": [],
-      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-10-29 continuation audit: left at its 0.0.61 value: TokenHub's interleaved-thinking (https://cloud.tencent.com/document/product/1823/130930) and preserved-thinking (https://cloud.tencent.com/document/product/1823/133534, \"支持模型：hy3\") pages name hy3 only, so no replay is claimed for hy4-preview. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check.",
+      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-10-29 continuation audit: left at its 0.0.61 value: TokenHub's interleaved-thinking (https://cloud.tencent.com/document/product/1823/130930) and preserved-thinking (https://cloud.tencent.com/document/product/1823/133534, \"支持模型：hy3\") pages name hy3 only, so no replay is claimed for hy4-preview. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check. Reasoning continuation is `none` (0.0.62): no page documents replaying reasoning_content for this model on this host, so nothing is replayed and nothing is claimed; it is on the live-call list.",
       "endpoints": [
         "chat"
       ],
@@ -46499,7 +46499,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -47209,7 +47209,7 @@
       "upstreamId": "hy4-preview",
       "displayName": "Hy4 Preview",
       "aliases": [],
-      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://proxy-hk.tencentcloud.com/pt/document/product/1300/78937 — international USD price table — 2026-10-29 continuation audit: left at its 0.0.61 value: TokenHub's interleaved-thinking (https://cloud.tencent.com/document/product/1823/130930) and preserved-thinking (https://cloud.tencent.com/document/product/1823/133534, \"支持模型：hy3\") pages name hy3 only, so no replay is claimed for hy4-preview. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check.",
+      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. — The vendor also serves this model on its OpenAI Responses endpoint (same host and key); `endpoints` lists only what this row's Chat Completions adapter routes, so `responses` is omitted until adapter-level Responses support lands (tracked follow-up, 2026-09-25). — 2026-09-25 audit fix (0.0.24): https://proxy-hk.tencentcloud.com/pt/document/product/1300/78937 — international USD price table — 2026-10-29 continuation audit: left at its 0.0.61 value: TokenHub's interleaved-thinking (https://cloud.tencent.com/document/product/1823/130930) and preserved-thinking (https://cloud.tencent.com/document/product/1823/133534, \"支持模型：hy3\") pages name hy3 only, so no replay is claimed for hy4-preview. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check. Reasoning continuation is `none` (0.0.62): no page documents replaying reasoning_content for this model on this host, so nothing is replayed and nothing is claimed; it is on the live-call list.",
       "endpoints": [
         "chat"
       ],
@@ -47293,7 +47293,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -48692,7 +48692,7 @@
       "upstreamId": "hy4-preview",
       "displayName": "Hy4 Preview (Token Plan)",
       "aliases": [],
-      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/130060 — personal Token Plan is subscription/points, no token pricing; automated API scripts/backends disallowed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. https://cloud.tencent.com/document/product/1823/130060 — available in general and Hy personal Token Plan.  — 2026-10-29 continuation audit: left at its 0.0.61 value: no page documents passing reasoning back on this host (https://api.lkeap.cloud.tencent.com); TokenHub's per-model pages (https://cloud.tencent.com/document/product/1823/...) describe tokenhub.tencentmaas.com, not this endpoint, so this branch claims no replay for it. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check.",
+      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/130060 — personal Token Plan is subscription/points, no token pricing; automated API scripts/backends disallowed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. https://cloud.tencent.com/document/product/1823/130060 — available in general and Hy personal Token Plan.  — 2026-10-29 continuation audit: left at its 0.0.61 value: no page documents passing reasoning back on this host (https://api.lkeap.cloud.tencent.com); TokenHub's per-model pages (https://cloud.tencent.com/document/product/1823/...) describe tokenhub.tencentmaas.com, not this endpoint, so this branch claims no replay for it. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check. Reasoning continuation is `none` (0.0.62): no page documents replaying reasoning_content for this model on this host, so nothing is replayed and nothing is claimed; it is on the live-call list.",
       "endpoints": [
         "chat"
       ],
@@ -48776,7 +48776,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -48787,7 +48787,7 @@
       "upstreamId": "kimi-k2.7-code",
       "displayName": "Kimi K2.7 Code (Token Plan)",
       "aliases": [],
-      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/130060 — personal Token Plan is subscription/points, no token pricing; automated API scripts/backends disallowed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. https://cloud.tencent.com/document/product/1823/130060 — available in general personal Token Plan.  — 2026-09-25 audit fix (0.0.24): https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code: context/input/output 256000/256000/256000 cat34 (2026-09-27): toolCalling filled from official evidence (see each field's sourceRef). — 2026-10-29 continuation audit: left at its 0.0.61 value: no page documents passing reasoning back on this host (https://api.lkeap.cloud.tencent.com); TokenHub's per-model pages (https://cloud.tencent.com/document/product/1823/...) describe tokenhub.tencentmaas.com, not this endpoint, so this branch claims no replay for it. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check.",
+      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/130060 — personal Token Plan is subscription/points, no token pricing; automated API scripts/backends disallowed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. https://cloud.tencent.com/document/product/1823/130060 — available in general personal Token Plan.  — 2026-09-25 audit fix (0.0.24): https://cloud.tencent.com/document/product/1823/130051 — kimi-k2.7-code: context/input/output 256000/256000/256000 cat34 (2026-09-27): toolCalling filled from official evidence (see each field's sourceRef). — 2026-10-29 continuation audit: left at its 0.0.61 value: no page documents passing reasoning back on this host (https://api.lkeap.cloud.tencent.com); TokenHub's per-model pages (https://cloud.tencent.com/document/product/1823/...) describe tokenhub.tencentmaas.com, not this endpoint, so this branch claims no replay for it. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check. Reasoning continuation is `none` (0.0.62): no page documents replaying reasoning_content for this model on this host, so nothing is replayed and nothing is claimed; it is on the live-call list.",
       "endpoints": [
         "chat"
       ],
@@ -48857,7 +48857,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -48868,7 +48868,7 @@
       "upstreamId": "kimi-k3",
       "displayName": "Kimi K3 (Token Plan)",
       "aliases": [],
-      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/130060 — personal Token Plan is subscription/points, no token pricing; automated API scripts/backends disallowed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. https://cloud.tencent.com/document/product/1823/130060 — available in general personal Token Plan.  — 2026-09-25 audit fix (0.0.24): https://cloud.tencent.com/document/product/1823/130051 — kimi-k3: context/input/output 1000000/1000000/1000000 cat34 (2026-09-27): toolCalling filled from official evidence (see each field's sourceRef). — 2026-10-29 continuation audit: left at its 0.0.61 value: no page documents passing reasoning back on this host (https://api.lkeap.cloud.tencent.com); TokenHub's per-model pages (https://cloud.tencent.com/document/product/1823/...) describe tokenhub.tencentmaas.com, not this endpoint, so this branch claims no replay for it. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check.",
+      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/130060 — personal Token Plan is subscription/points, no token pricing; automated API scripts/backends disallowed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. https://cloud.tencent.com/document/product/1823/130060 — available in general personal Token Plan.  — 2026-09-25 audit fix (0.0.24): https://cloud.tencent.com/document/product/1823/130051 — kimi-k3: context/input/output 1000000/1000000/1000000 cat34 (2026-09-27): toolCalling filled from official evidence (see each field's sourceRef). — 2026-10-29 continuation audit: left at its 0.0.61 value: no page documents passing reasoning back on this host (https://api.lkeap.cloud.tencent.com); TokenHub's per-model pages (https://cloud.tencent.com/document/product/1823/...) describe tokenhub.tencentmaas.com, not this endpoint, so this branch claims no replay for it. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check. Reasoning continuation is `none` (0.0.62): no page documents replaying reasoning_content for this model on this host, so nothing is replayed and nothing is claimed; it is on the live-call list.",
       "endpoints": [
         "chat"
       ],
@@ -48940,7 +48940,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -48954,7 +48954,7 @@
         "hy3-preview",
         "hy3-202608"
       ],
-      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/130060 — personal Token Plan is subscription/points, no token pricing; automated API scripts/backends disallowed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. https://cloud.tencent.com/document/product/1823/130060 — available in Hy personal Token Plan. hy3-preview routes to Hy3; hy3-202608 shares backing model but has a different points charge. — 2026-10-29 continuation audit: left at its 0.0.61 value: no page documents passing reasoning back on this host (https://api.lkeap.cloud.tencent.com); TokenHub's per-model pages (https://cloud.tencent.com/document/product/1823/...) describe tokenhub.tencentmaas.com, not this endpoint, so this branch claims no replay for it. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check.",
+      "$comment": "https://cloud.tencent.com/document/product/1823/130079 — Guangzhou https://tokenhub.tencentmaas.com/v1 and Singapore https://tokenhub-intl.tencentmaas.com/v1 are separate sites with non-interchangeable keys; OpenAI Chat uses /v1/chat/completions. https://cloud.tencent.com/document/product/1823/135872 — reasoning_effort accepts low/medium/high for thinking models with internal Hy mapping. Off via thinking.type disabled or enable_thinking:false, but model-specific behavior unprobed. https://cloud.tencent.com/document/product/1823/130060 — personal Token Plan is subscription/points, no token pricing; automated API scripts/backends disallowed. https://cloud.tencent.com/document/product/1823/135872 says top_k, repetition_penalty, modalities, audio are silently ignored on Chat, not rejected; excluded from unsupportedParameters. https://cloud.tencent.com/document/product/1823/130060 — available in Hy personal Token Plan. hy3-preview routes to Hy3; hy3-202608 shares backing model but has a different points charge. — 2026-10-29 continuation audit: left at its 0.0.61 value: no page documents passing reasoning back on this host (https://api.lkeap.cloud.tencent.com); TokenHub's per-model pages (https://cloud.tencent.com/document/product/1823/...) describe tokenhub.tencentmaas.com, not this endpoint, so this branch claims no replay for it. Without `full-exposed` the Chat Completions adapter replays nothing here. Listed for a live check. Reasoning continuation is `none` (0.0.62): no page documents replaying reasoning_content for this model on this host, so nothing is replayed and nothing is claimed; it is on the live-call list.",
       "endpoints": [
         "chat"
       ],
@@ -49038,7 +49038,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate"

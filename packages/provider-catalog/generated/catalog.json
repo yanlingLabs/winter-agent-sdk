@@ -113799,7 +113799,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -113895,7 +113895,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -113977,7 +113977,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -114061,7 +114061,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -115089,7 +115089,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
@@ -115509,7 +115509,7 @@
           "medium",
           "high"
         ],
-        "continuation": "plaintext"
+        "continuation": "none"
       },
       "pricing": {
         "value": {
