@@ -4,6 +4,19 @@ All notable changes to the Winter Agent SDK are recorded here. Versions follow t
 `VERSION` file (bumped via `bun run version:bump`, synced via `bun run version:sync`); each entry
 corresponds to one `chore(release): vX.Y.Z` commit.
 
+## 0.0.61
+
+### `@yanlinglabs/winter-provider-catalog`: OpenRouter reasoning rows keep their reasoning state
+
+- **81 OpenRouter reasoning rows move from `continuation: "none"` to `"opaque-provider-state"`.** Each row's `continuationDomain` is its own route. These were every OpenRouter row with reasoning except Meta's.
+  - The Chat Completions adapter already captured and replayed `reasoning_details` for any OpenRouter row marked `opaque-provider-state`, whatever the upstream, because OpenRouter normalizes every upstream's reasoning into that field.
+  - So `none` only discarded the state. It also made a host hide the OpenRouter route beside a vendor route that keeps state.
+  - The evidence is OpenRouter's reasoning-tokens docs. Replay has not been live-probed per upstream.
+- **Meta's Muse rows stay `none`.** These are `openrouter/meta/*`: muse-spark-1.3, muse-spark-1.3-contributor, muse-spark-open and muse-glimmer-30b. Meta documents that Chat Completions cannot replay external reasoning.
+- **Tests.**
+  - A catalog test pins the rule for every OpenRouter row.
+  - A provider-runtime test runs a two-turn tool loop through Kimi K3.1 Pro, MiniMax M3.1 Flash, Gemini 4 Argon, Grok Build 0.1, Qwen 3.8 Flash and GLM-5.3 FlashX, and checks that turn 1's `reasoning_details` go back byte for byte.
+
 ## 0.0.60
 
 ### `@yanlinglabs/winter-provider-catalog`: 101 new models (1303 → 1404), Kimi and MiniMax request fixes

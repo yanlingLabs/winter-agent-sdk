@@ -2227,3 +2227,29 @@ describe("WS-27: OpenCode Zen rows on the coding-agent-gateway ruling", () => {
     });
   }
 });
+
+describe("0.0.61: every OpenRouter reasoning row replays its own reasoning_details", () => {
+  // The adapter captures and replays `reasoning_details` on the OpenRouter connection for any row whose
+  // continuation is `opaque-provider-state`, whatever the upstream, so a reasoning row left at `none`
+  // only threw that state away -- and made a host hide the route beside a vendor twin that keeps state.
+  // Meta's Muse rows are the documented exception: Meta says Chat Completions cannot replay external reasoning.
+  const openrouter = catalog.models.filter((m) => m.providerId === "openrouter");
+  const isMeta = (m: WinterModelDescriptor) => m.key.startsWith("openrouter/meta/");
+
+  test("a reasoning row is opaque-provider-state, scoped to its own route", () => {
+    const reasoning = openrouter.filter((m) => m.reasoning?.supported.value === true && !isMeta(m));
+    expect(reasoning.length).toBeGreaterThanOrEqual(87);
+    for (const m of reasoning) {
+      expect([m.key, m.reasoning!.continuation]).toEqual([m.key, "opaque-provider-state"]);
+      expect([m.key, m.reasoning!.continuationDomain?.value]).toEqual([m.key, [m.key]]);
+    }
+  });
+
+  test("Meta's Muse rows, and rows without reasoning, keep none", () => {
+    const meta = openrouter.filter(isMeta);
+    expect(meta.length).toBeGreaterThanOrEqual(4);
+    for (const m of [...meta, ...openrouter.filter((r) => r.reasoning !== undefined && r.reasoning.supported.value !== true)]) {
+      expect([m.key, m.reasoning!.continuation]).toEqual([m.key, "none"]);
+    }
+  });
+});

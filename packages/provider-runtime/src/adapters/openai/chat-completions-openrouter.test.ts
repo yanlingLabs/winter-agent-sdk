@@ -317,3 +317,35 @@ describe("W7 + W1 + W5 end to end: a Claude tool loop through OpenRouter", () =>
     expect(rendered!.nativeState).toBeUndefined();
   });
 });
+
+describe("0.0.61: reasoning_details replay is upstream-agnostic on OpenRouter", () => {
+  // OpenRouter normalizes every upstream's reasoning into `reasoning_details`; the capture is gated on
+  // the connection and the row's continuation, never on the upstream vendor -- so the same tool loop
+  // carries the state back for a Kimi, MiniMax, Gemini, Grok or Qwen route exactly as for Claude.
+  for (const upstream of ["moonshotai/kimi-k3.1-pro", "minimax/minimax-m3.1-flash", "google/gemini-4-argon", "x-ai/grok-build-0.1", "qwen/qwen3.8-flash", "z-ai/glm-5.3-flashx"]) {
+    test(`${upstream}: turn 2 sends turn 1's reasoning_details back byte for byte`, async () => {
+      const registry = createRegistry(catalog);
+      for (const adapter of createShippedAdapters(catalog)) registry.register(adapter);
+      const resolved = registry.resolve({ model: upstream, provider: { providerId: "openrouter" } });
+      if (!("adapter" in resolved)) throw new Error(`resolution failed: ${String(resolved)}`);
+      expect(resolved.continuationDomain).toBe(`openrouter/${upstream}`);
+      const renderer = createHistoryRenderer(registry);
+      const target = { family: resolved.adapter.family, continuationDomain: resolved.continuationDomain!, readableState: "none" as const, providerId: resolved.providerId, modelKey: resolved.modelKey };
+      const origin = { providerId: resolved.providerId, modelKey: resolved.modelKey, family: resolved.adapter.family, continuationDomain: resolved.continuationDomain! };
+      const ctx = testContext({ providerId: "openrouter" });
+      const bodies = stubFetchSequence([fixture.turn1, fixture.turn2]);
+      const tools = [{ name: "lookup", description: "Look something up.", inputSchema: { type: "object", properties: { q: { type: "string" } } } }];
+
+      const history: ProviderMessageLike[] = [{ role: "user", content: "What's the weather?" }];
+      const first = await foldProviderStream(resolved.adapter.streamTurn({ model: resolved.providerModelId, messages: renderer.render(history, new Map(), target), tools }, ctx));
+      expect(first.kind).toBe("tool_use");
+      history.push(assembledToMessage(first, origin));
+      history.push({ role: "tool", content: [{ type: "tool_result", tool_use_id: "toolu_synthetic_01", content: "sunny" }] });
+      await foldProviderStream(resolved.adapter.streamTurn({ model: resolved.providerModelId, messages: renderer.render(history, new Map(), target), tools }, ctx));
+
+      const assistant = (bodies[1]!["messages"] as Array<Record<string, unknown>>).find((m) => m["role"] === "assistant")!;
+      expect(assistant["reasoning_details"]).toEqual(fixture.expectedReasoningDetails);
+      expect(bodies[0]!["model"]).toBe(upstream);
+    });
+  }
+});
