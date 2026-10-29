@@ -182,7 +182,7 @@ describe("W7: reasoning_details", () => {
     ]);
   });
 
-  test("2026-10-29: two block types at ONE index (a readable block beside its encrypted twin) stay two whole blocks when their fragments interleave", () => {
+  test("2026-10-29: text fragments at one index join across interleaved encrypted entries; each encrypted entry is a whole blob, never joined", () => {
     const acc = new ReasoningDetailsAccumulator();
     acc.add([{ type: "reasoning.text", text: "Check ", format: "google-gemini-v1", index: 0 }]);
     acc.add([{ type: "reasoning.encrypted", data: "Q2lR", id: "tool_lookup_0", format: "google-gemini-v1", index: 0 }]);
@@ -190,7 +190,8 @@ describe("W7: reasoning_details", () => {
     acc.add([{ type: "reasoning.encrypted", data: "x0Zz", index: 0 }]);
     expect(acc.complete).toEqual([
       { type: "reasoning.text", text: "Check the forecast.", format: "google-gemini-v1", index: 0 },
-      { type: "reasoning.encrypted", data: "Q2lRx0Zz", id: "tool_lookup_0", format: "google-gemini-v1", index: 0 },
+      { type: "reasoning.encrypted", data: "Q2lR", id: "tool_lookup_0", format: "google-gemini-v1", index: 0 },
+      { type: "reasoning.encrypted", data: "x0Zz", index: 0 },
     ]);
   });
 

@@ -33,6 +33,11 @@ corresponds to one `chore(release): vX.Y.Z` commit.
   - **Alibaba, Alibaba CN and Qwen Cloud:** `preserve_thinking: true` is sent, for the documented models only.
   - **List-shaped `content`:** now parsed on every surface. Before, a Mistral answer lost its leading text.
   - **OpenRouter:** `reasoning_details` blocks are keyed by index and type.
+- **Fix for 0.0.61's Gemini-through-OpenRouter tool loops.** Every second request was refused.
+  - **Encrypted blobs stay whole:** each `reasoning.encrypted` entry is now captured as its own blob. Before, entries sharing an index had their `data` concatenated, and Gemini sends one blob per signed step at index 0.
+  - **Unsigned thought text stays home:** a `reasoning.text` entry in format `anthropic-claude-v1` or `google-gemini-v1` without a `signature` is no longer replayed. Google signs Gemini's thought text internally and rejects it on replay; Anthropic rejects unsigned thinking.
+  - **Source:** both rules are what OpenRouter's own AI SDK provider does. The fix is tested on a doc-shaped fixture and not yet live-verified.
+- **Mistral Medium 3.5 on OpenRouter:** the row notes that OpenRouter lists no cache-read price, so cached prompt tokens bill at the full input rate.
 - **Unchanged.**
   - Azure's continuation depends on the connection's `apiVersion`.
   - The Anthropic-format adapter still replays a model's own thinking blocks whatever its row says.

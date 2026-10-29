@@ -8,7 +8,7 @@ import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import googleFixture from "./__fixtures__/google-openai-thought-signature-tool-loop.json" with { type: "json" };
 import mistralFixture from "./__fixtures__/mistral-think-chunk-tool-loop.json" with { type: "json" };
 import reasoningFixture from "./__fixtures__/reasoning-content-tool-loop.json" with { type: "json" };
-import { ChatStreamMapper, chatExposedReasoningFieldFor, chatPreserveThinkingFor, chatThinkChunksFor, chatToolCallExtraContentFor, mapChatMessages } from "./chat-completions.ts";
+import { ChatStreamMapper, chatExposedReasoningFieldFor, chatPreserveThinkingFor, chatThinkChunksFor, chatToolCallExtraContentFor, mapChatMessages, replayableReasoningDetails } from "./chat-completions.ts";
 import { toWireMessages } from "../anthropic/messages.ts";
 import { testContext } from "./testing.ts";
 import { createShippedAdapters } from "../index.ts";
@@ -368,5 +368,51 @@ describe("Vertex Gemini keeps its thought signatures, inside its own domain", ()
     if (!("adapter" in vertex) || !("adapter" in google)) throw new Error("resolution failed");
     expect(vertex.continuationDomain).toBe("vertex/gemini-4-argon");
     expect(vertex.continuationDomain).not.toBe(google.continuationDomain);
+  });
+});
+
+describe("Gemini through OpenRouter: encrypted blobs stay whole, unsigned thought text stays home", () => {
+  // Shaped from OpenRouter's documented reasoning_details types and the format `google-gemini-v1`
+  // (https://openrouter.ai/docs/use-cases/reasoning-tokens): Gemini streams its readable thought text
+  // with no `signature`, then one `reasoning.encrypted` blob per signed step -- here two parallel calls,
+  // both blobs at index 0. 0.0.61 joined the two blobs' `data` into one and sent the unsigned text back;
+  // the second request of every tool loop was refused.
+  const chunk = (delta: Record<string, unknown>, finish: string | null = null) => ({ id: "gen-1", object: "chat.completion.chunk", created: 1, model: "google/gemini-4-argon", choices: [{ index: 0, delta, finish_reason: finish }] });
+  const text = { type: "reasoning.text", text: "Two cities, two lookups.", format: "google-gemini-v1", index: 0 };
+  const blobA = { type: "reasoning.encrypted", data: "c2lnLXBhcmlz", id: "tool_paris", format: "google-gemini-v1", index: 0 };
+  const blobB = { type: "reasoning.encrypted", data: "c2lnLWxvbmRvbg==", id: "tool_london", format: "google-gemini-v1", index: 0 };
+  const turns = {
+    turn1: [
+      chunk({ role: "assistant", content: "", reasoning: "Two cities, ", reasoning_details: [{ ...text, text: "Two cities, " }] }),
+      chunk({ reasoning: "two lookups.", reasoning_details: [{ ...text, text: "two lookups." }] }),
+      chunk({ reasoning_details: [blobA], tool_calls: [{ index: 0, id: "tool_paris", type: "function", function: { name: "get_current_temperature", arguments: '{"location":"Paris"}' } }] }),
+      chunk({ reasoning_details: [blobB], tool_calls: [{ index: 1, id: "tool_london", type: "function", function: { name: "get_current_temperature", arguments: '{"location":"London"}' } }] }),
+      chunk({}, "tool_calls"),
+    ],
+    turn2: [chunk({ role: "assistant", content: "Paris 18, London 14." }), chunk({}, "stop")],
+  };
+
+  test("turn 2 carries both blobs exactly as streamed, in order, and none of the unsigned text", async () => {
+    const { bodies } = await toolLoop("openrouter", "google/gemini-4-argon", turns, [
+      { id: "tool_paris", content: "18" },
+      { id: "tool_london", content: "14" },
+    ]);
+    const assistant = (bodies[1]!["messages"] as Array<Record<string, unknown>>).find((m) => m["role"] === "assistant")!;
+    expect(assistant["reasoning_details"]).toEqual([blobA, blobB]);
+  });
+
+  test("the replay filter: unsigned Claude or Gemini text is dropped; signed text, other formats, unlabelled text and every non-text entry go back verbatim", () => {
+    const kept = [
+      { type: "reasoning.text", text: "signed", format: "anthropic-claude-v1", signature: "sig" },
+      { type: "reasoning.text", text: "kimi", format: "unknown" },
+      { type: "reasoning.text", text: "no format" },
+      { type: "reasoning.summary", summary: "s", format: "google-gemini-v1" },
+      blobA,
+    ];
+    const dropped = [
+      { type: "reasoning.text", text: "unsigned", format: "anthropic-claude-v1" },
+      { type: "reasoning.text", text: "gemini", format: "google-gemini-v1" },
+    ];
+    expect(replayableReasoningDetails([dropped[0], ...kept, dropped[1]])).toEqual(kept);
   });
 });
