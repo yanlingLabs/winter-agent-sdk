@@ -27,6 +27,9 @@ afterEach(() => {
 });
 
 function stubFetchSequence(turns: readonly unknown[][]): Array<Record<string, unknown>> {
+  // A test that runs several loops stubs once per loop: restore the real fetch first, or the last
+  // restore would put back the previous STUB and leak it into every later test file in the process.
+  restoreFetch?.();
   const original = globalThis.fetch;
   const bodies: Array<Record<string, unknown>> = [];
   let i = 0;
